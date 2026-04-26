@@ -11,6 +11,7 @@ use App\Policies\AuditLogPolicy;
 use App\Policies\DocumentPolicy;
 use App\Policies\UserPolicy;
 use Illuminate\Support\Facades\Gate;
+use Illuminate\Support\Facades\Schema;
 use Illuminate\Support\ServiceProvider;
 
 class AppServiceProvider extends ServiceProvider
@@ -28,6 +29,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function boot(): void
     {
+        // Keep legacy MySQL index lengths compatible with utf8mb4 columns.
+        Schema::defaultStringLength(191);
+
         Gate::policy(User::class, UserPolicy::class);
         Gate::policy(Document::class, DocumentPolicy::class);
         Gate::policy(AuditLog::class, AuditLogPolicy::class);
