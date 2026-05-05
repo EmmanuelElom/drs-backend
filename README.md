@@ -353,7 +353,7 @@ The frontend expects:
 - `VITE_API_BASE_URL` pointing at this backend, usually `http://localhost:8000/api`
 - bearer token storage in the browser
 - JSON responses with `data` and optional `meta`
-- document responses may include `fileData` for inline/base64 files and `fileUrl` for uploaded files that should be fetched with the bearer token
+- document responses include `fileData` for PDF rendering; uploaded files are stored as base64 in the database and backfilled from storage if an older row is missing it
 
 If the frontend and backend are hosted on different domains, make sure CORS is configured correctly.
 

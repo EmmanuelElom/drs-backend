@@ -125,7 +125,7 @@ class DocumentController extends Controller
             'file_name' => $hasUpload ? $storedFile['file_name'] : ($data['file_name'] ?? null),
             'file_size' => $hasUpload ? $storedFile['file_size'] : ($data['file_size'] ?? null),
             'file_type' => $hasUpload ? $storedFile['file_type'] : ($data['file_type'] ?? null),
-            'file_data' => $hasUpload ? null : ($data['file_data'] ?? null),
+            'file_data' => $hasUpload ? $storedFile['file_data'] : ($data['file_data'] ?? null),
             'file_disk' => $storedFile['file_disk'] ?? null,
             'file_path' => $storedFile['file_path'] ?? null,
             'storage_mode' => $hasUpload ? 'upload' : ($hasInlineFile ? 'base64' : $storageMode),
@@ -393,7 +393,6 @@ class DocumentController extends Controller
             'title' => $document->title,
             'content' => $document->content,
             'fileType' => $document->file_type,
-            'fileData' => $document->file_data,
             'reviewAcknowledged' => (bool) $document->review_acknowledged,
             'acknowledgedAt' => optional($document->acknowledged_at)->toISOString(),
             'signatureInvited' => (bool) $document->signature_invited,
@@ -425,7 +424,7 @@ class DocumentController extends Controller
                 ])->values()
                 : [],
             'storageMode' => $document->storage_mode,
-            'fileUrl' => $document->file_path ? route('documents.file', ['document' => $document->document_uuid]) : null,
+            'fileData' => $this->resolveDocumentFileData($document),
         ];
     }
 
@@ -450,6 +449,7 @@ class DocumentController extends Controller
         $fileSize = $file->getSize() ?: 0;
         $safeName = Str::uuid()->toString() . '.pdf';
         $filePath = $file->storeAs('documents', $safeName, $disk);
+        $fileContents = file_get_contents($file->getRealPath()) ?: '';
 
         return [
             'file_disk' => $disk,
@@ -457,7 +457,35 @@ class DocumentController extends Controller
             'file_name' => $fileName,
             'file_size' => $fileSize,
             'file_type' => $fileType,
+            'file_data' => sprintf('data:%s;base64,%s', $fileType, base64_encode($fileContents)),
         ];
+    }
+
+    private function resolveDocumentFileData(Document $document): ?string
+    {
+        if ($document->file_data) {
+            return $document->file_data;
+        }
+
+        if (! $document->file_path) {
+            return null;
+        }
+
+        $disk = $document->file_disk ?: config('filesystems.default');
+
+        if (! Storage::disk($disk)->exists($document->file_path)) {
+            return null;
+        }
+
+        $mimeType = $document->file_type ?: Storage::disk($disk)->mimeType($document->file_path) ?: 'application/pdf';
+        $contents = Storage::disk($disk)->get($document->file_path);
+        $fileData = sprintf('data:%s;base64,%s', $mimeType, base64_encode($contents));
+
+        $document->forceFill([
+            'file_data' => $fileData,
+        ])->saveQuietly();
+
+        return $fileData;
     }
 
     private function deleteStoredFile(Document $document): void

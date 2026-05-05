@@ -294,13 +294,27 @@ class ApiWorkflowTest extends TestCase
         $this->assertDatabaseHas('audit_logs', ['action' => 'settings_updated']);
         Storage::disk('local')->assertExists($document->file_path);
 
-        $this->withHeader('Authorization', "Bearer {$token}")
+        $documentResponse = $this->withHeader('Authorization', "Bearer {$token}")
             ->getJson("/api/documents/{$documentId}")
-            ->assertOk()
-            ->assertJsonPath('data.storageMode', 'upload')
-            ->assertJsonPath('data.fileName', 'policy-review.pdf')
-            ->assertJsonPath('data.fileData', null)
-            ->assertJsonPath('data.fileUrl', url("/api/documents/{$documentId}/file"));
+            ->assertOk();
+
+        $this->assertSame('upload', $documentResponse->json('data.storageMode'));
+        $this->assertSame('policy-review.pdf', $documentResponse->json('data.fileName'));
+        $this->assertStringStartsWith('data:application/pdf;base64,', (string) $documentResponse->json('data.fileData'));
+        $this->assertSame($documentResponse->json('data.fileData'), $document->fresh()->file_data);
+
+        $document->forceFill([
+            'file_data' => null,
+        ])->saveQuietly();
+
+        $backfilledResponse = $this->withHeader('Authorization', "Bearer {$token}")
+            ->getJson("/api/documents/{$documentId}")
+            ->assertOk();
+
+        $this->assertSame('upload', $backfilledResponse->json('data.storageMode'));
+        $this->assertSame('policy-review.pdf', $backfilledResponse->json('data.fileName'));
+        $this->assertStringStartsWith('data:application/pdf;base64,', (string) $backfilledResponse->json('data.fileData'));
+        $this->assertSame($backfilledResponse->json('data.fileData'), $document->fresh()->file_data);
 
         $this->withHeader('Authorization', "Bearer {$token}")
             ->get("/api/documents/{$documentId}/file")
