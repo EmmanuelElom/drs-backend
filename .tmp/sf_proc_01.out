@@ -1,0 +1,11 @@
+
+   PASS  Tests\Feature\ApiWorkflowTest
+  ✓ admin can manage users documents and audit logs                                                             25.81s  
+  ✓ user can review comment acknowledge and sign assigned document                                               0.34s  
+  ✓ regular user cannot access admin endpoints                                                                   0.33s  
+  ✓ users can update their profile and admins can update users                                                   0.18s  
+  ✓ admin can change document storage mode and upload pdf files                                                  2.98s  
+
+  Tests:    5 passed (60 assertions)
+  Duration: 41.88s
+
