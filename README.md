@@ -180,6 +180,8 @@ Query parameters supported by `GET /api/users`:
 - `POST /api/documents/{document}/status`
 - `DELETE /api/documents/{document}`
 
+The document file endpoint is protected by bearer-token auth, streams PDFs inline, and is intended for the assigned reviewer or an admin.
+
 Query parameters supported by `GET /api/documents`:
 
 - `page`
@@ -318,7 +320,8 @@ High-level rules:
 - admins can manage users
 - admins can manage documents and audit logs
 - users can update their own profile
-- users can review, comment, acknowledge, and sign assigned documents
+- assigned reviewers can review, comment, acknowledge, and sign their own documents
+- document review access is enforced by policy; other users receive 403 responses
 - audit log access is restricted by policy
 
 ## Pagination and Filters
@@ -350,6 +353,7 @@ The frontend expects:
 - `VITE_API_BASE_URL` pointing at this backend, usually `http://localhost:8000/api`
 - bearer token storage in the browser
 - JSON responses with `data` and optional `meta`
+- document responses may include `fileData` for inline/base64 files and `fileUrl` for uploaded files that should be fetched with the bearer token
 
 If the frontend and backend are hosted on different domains, make sure CORS is configured correctly.
 

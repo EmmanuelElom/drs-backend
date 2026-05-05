@@ -186,9 +186,16 @@ class DocumentController extends Controller
             abort(404, 'File not found.');
         }
 
-        return Storage::disk($disk)->download(
+        $mimeType = $document->file_type
+            ?: Storage::disk($disk)->mimeType($document->file_path)
+            ?: 'application/pdf';
+
+        return Storage::disk($disk)->response(
             $document->file_path,
-            $document->file_name ?? basename($document->file_path)
+            $document->file_name ?? basename($document->file_path),
+            [
+                'Content-Type' => $mimeType,
+            ]
         );
     }
 
@@ -418,8 +425,7 @@ class DocumentController extends Controller
                 ])->values()
                 : [],
             'storageMode' => $document->storage_mode,
-            'fileUrl' => $document->file_path ? url("/api/documents/{$document->document_uuid}/file") : null,
-            'fileData' => $this->resolveDocumentFileData($document),
+            'fileUrl' => $document->file_path ? route('documents.file', ['document' => $document->document_uuid]) : null,
         ];
     }
 
@@ -452,28 +458,6 @@ class DocumentController extends Controller
             'file_size' => $fileSize,
             'file_type' => $fileType,
         ];
-    }
-
-    private function resolveDocumentFileData(Document $document): ?string
-    {
-        if ($document->file_data) {
-            return $document->file_data;
-        }
-
-        if (! $document->file_path) {
-            return null;
-        }
-
-        $disk = $document->file_disk ?: config('filesystems.default');
-
-        if (! Storage::disk($disk)->exists($document->file_path)) {
-            return null;
-        }
-
-        $mimeType = $document->file_type ?: Storage::disk($disk)->mimeType($document->file_path) ?: 'application/pdf';
-        $contents = Storage::disk($disk)->get($document->file_path);
-
-        return sprintf('data:%s;base64,%s', $mimeType, base64_encode($contents));
     }
 
     private function deleteStoredFile(Document $document): void

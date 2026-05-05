@@ -29,7 +29,7 @@ Route::middleware(AuthenticateApiToken::class)->group(function () {
     Route::get('/documents', [DocumentController::class, 'index']);
     Route::post('/documents', [DocumentController::class, 'store']);
     Route::get('/documents/{document}', [DocumentController::class, 'show']);
-    Route::get('/documents/{document}/file', [DocumentController::class, 'downloadFile']);
+    Route::get('/documents/{document}/file', [DocumentController::class, 'downloadFile'])->name('documents.file');
     Route::post('/documents/{document}/acknowledge', [DocumentController::class, 'acknowledge']);
     Route::post('/documents/{document}/invite-signature', [DocumentController::class, 'inviteSignature']);
     Route::post('/documents/{document}/reassign', [DocumentController::class, 'reassign']);

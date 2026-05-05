@@ -298,7 +298,14 @@ class ApiWorkflowTest extends TestCase
             ->getJson("/api/documents/{$documentId}")
             ->assertOk()
             ->assertJsonPath('data.storageMode', 'upload')
-            ->assertJsonPath('data.fileName', 'policy-review.pdf');
+            ->assertJsonPath('data.fileName', 'policy-review.pdf')
+            ->assertJsonPath('data.fileData', null)
+            ->assertJsonPath('data.fileUrl', url("/api/documents/{$documentId}/file"));
+
+        $this->withHeader('Authorization', "Bearer {$token}")
+            ->get("/api/documents/{$documentId}/file")
+            ->assertOk()
+            ->assertHeader('Content-Type', 'application/pdf');
     }
 
     private function loginAndGetToken(string $username, string $password): string
