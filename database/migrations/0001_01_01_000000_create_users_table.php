@@ -18,6 +18,7 @@ return new class extends Migration
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
             $table->enum('role', ['admin', 'user'])->default('user');
+            $table->unsignedInteger('jwt_token_version')->default(0);
             $table->string('api_token_hash', 64)->nullable()->unique();
             $table->timestamp('api_token_last_used_at')->nullable();
             $table->rememberToken();

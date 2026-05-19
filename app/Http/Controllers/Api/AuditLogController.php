@@ -17,11 +17,16 @@ class AuditLogController extends Controller
             'per_page' => ['nullable', 'integer', 'min:1', 'max:100'],
             'search' => ['nullable', 'string', 'max:255'],
             'action' => ['nullable', 'string', 'max:100'],
+            'event_type' => ['nullable', 'string', 'max:100'],
             'performed_by' => ['nullable', 'string', 'max:255'],
+            'actor_name' => ['nullable', 'string', 'max:255'],
             'target_user' => ['nullable', 'string', 'max:255'],
             'document_title' => ['nullable', 'string', 'max:255'],
+            'invitation_id' => ['nullable', 'exists:document_invitations,id'],
             'from' => ['nullable', 'date'],
             'to' => ['nullable', 'date'],
+            'dateFrom' => ['nullable', 'date'],
+            'dateTo' => ['nullable', 'date'],
             'all' => ['nullable', 'boolean'],
         ]);
 
@@ -31,22 +36,28 @@ class AuditLogController extends Controller
                 $query->where(function ($inner) use ($search) {
                     $inner->where('action', 'like', "%{$search}%")
                         ->orWhere('performed_by', 'like', "%{$search}%")
+                        ->orWhere('actor_name', 'like', "%{$search}%")
                         ->orWhere('target_user', 'like', "%{$search}%")
                         ->orWhere('document_title', 'like', "%{$search}%")
                         ->orWhere('details', 'like', "%{$search}%");
                 });
             })
             ->when($data['action'] ?? null, fn ($query, string $action) => $query->where('action', $action))
+            ->when($data['event_type'] ?? null, fn ($query, string $eventType) => $query->where('event_type', $eventType))
             ->when($data['performed_by'] ?? null, fn ($query, string $performedBy) => $query->where('performed_by', 'like', "%{$performedBy}%"))
+            ->when($data['actor_name'] ?? null, fn ($query, string $actorName) => $query->where('actor_name', 'like', "%{$actorName}%"))
             ->when($data['target_user'] ?? null, fn ($query, string $targetUser) => $query->where('target_user', 'like', "%{$targetUser}%"))
             ->when($data['document_title'] ?? null, fn ($query, string $documentTitle) => $query->where('document_title', 'like', "%{$documentTitle}%"))
             ->when($data['from'] ?? null, fn ($query, string $from) => $query->whereDate('timestamp', '>=', $from))
             ->when($data['to'] ?? null, fn ($query, string $to) => $query->whereDate('timestamp', '<=', $to))
+            ->when($data['dateFrom'] ?? null, fn ($query, string $from) => $query->whereDate('timestamp', '>=', $from))
+            ->when($data['dateTo'] ?? null, fn ($query, string $to) => $query->whereDate('timestamp', '<=', $to))
+            ->when($data['invitation_id'] ?? null, fn ($query, string $invitationId) => $query->where('invitation_id', $invitationId))
             ->orderByDesc('timestamp');
 
         if ($request->boolean('all')) {
             return response()->json([
-                'data' => $query->limit(200)->get()->map(fn (AuditLog $log) => $this->serializeAuditLog($log))->values(),
+                'data' => $query->get()->map(fn (AuditLog $log) => $this->serializeAuditLog($log))->values(),
             ]);
         }
 
@@ -80,6 +91,57 @@ class AuditLogController extends Controller
         ]);
     }
 
+    public function export(Request $request)
+    {
+        $this->authorize('viewAny', AuditLog::class);
+
+        $data = $request->validate([
+            'search' => ['nullable', 'string', 'max:255'],
+            'action' => ['nullable', 'string', 'max:100'],
+            'event_type' => ['nullable', 'string', 'max:100'],
+            'performed_by' => ['nullable', 'string', 'max:255'],
+            'actor_name' => ['nullable', 'string', 'max:255'],
+            'target_user' => ['nullable', 'string', 'max:255'],
+            'document_title' => ['nullable', 'string', 'max:255'],
+            'invitation_id' => ['nullable', 'exists:document_invitations,id'],
+            'from' => ['nullable', 'date'],
+            'to' => ['nullable', 'date'],
+            'dateFrom' => ['nullable', 'date'],
+            'dateTo' => ['nullable', 'date'],
+        ]);
+
+        $query = $this->buildQuery($data);
+        $logs = $query->get();
+        $lines = [
+            'id,timestamp,eventType,action,performedBy,performedById,actorName,actorId,targetUser,targetUserId,documentTitle,documentId,invitationId,details,ipAddress',
+        ];
+
+        foreach ($logs as $log) {
+            $lines[] = implode(',', [
+                $this->csvValue($log->id),
+                $this->csvValue(optional($log->timestamp)->toISOString()),
+                $this->csvValue($log->event_type),
+                $this->csvValue($log->action),
+                $this->csvValue($log->performed_by),
+                $this->csvValue($log->performed_by_id),
+                $this->csvValue($log->actor_name),
+                $this->csvValue($log->actor_id),
+                $this->csvValue($log->target_user),
+                $this->csvValue($log->target_user_id),
+                $this->csvValue($log->document_title),
+                $this->csvValue($log->document_id),
+                $this->csvValue($log->invitation_id),
+                $this->csvValue($log->details),
+                $this->csvValue($log->ip_address),
+            ]);
+        }
+
+        return response(implode("\n", $lines), 200, [
+            'Content-Type' => 'text/csv; charset=UTF-8',
+            'Content-Disposition' => 'attachment; filename="audit-logs.csv"',
+        ]);
+    }
+
     public function destroy(Request $request)
     {
         $this->authorize('deleteAny', AuditLog::class);
@@ -96,19 +158,59 @@ class AuditLogController extends Controller
         ]);
     }
 
+    private function buildQuery(array $data)
+    {
+        return AuditLog::query()
+            ->with(['performer', 'targetUser', 'document'])
+            ->when($data['search'] ?? null, function ($query, string $search) {
+                $query->where(function ($inner) use ($search) {
+                    $inner->where('action', 'like', "%{$search}%")
+                        ->orWhere('performed_by', 'like', "%{$search}%")
+                        ->orWhere('actor_name', 'like', "%{$search}%")
+                        ->orWhere('target_user', 'like', "%{$search}%")
+                        ->orWhere('document_title', 'like', "%{$search}%")
+                        ->orWhere('details', 'like', "%{$search}%");
+                });
+            })
+            ->when($data['action'] ?? null, fn ($query, string $action) => $query->where('action', $action))
+            ->when($data['event_type'] ?? null, fn ($query, string $eventType) => $query->where('event_type', $eventType))
+            ->when($data['performed_by'] ?? null, fn ($query, string $performedBy) => $query->where('performed_by', 'like', "%{$performedBy}%"))
+            ->when($data['actor_name'] ?? null, fn ($query, string $actorName) => $query->where('actor_name', 'like', "%{$actorName}%"))
+            ->when($data['target_user'] ?? null, fn ($query, string $targetUser) => $query->where('target_user', 'like', "%{$targetUser}%"))
+            ->when($data['document_title'] ?? null, fn ($query, string $documentTitle) => $query->where('document_title', 'like', "%{$documentTitle}%"))
+            ->when($data['from'] ?? null, fn ($query, string $from) => $query->whereDate('timestamp', '>=', $from))
+            ->when($data['to'] ?? null, fn ($query, string $to) => $query->whereDate('timestamp', '<=', $to))
+            ->when($data['dateFrom'] ?? null, fn ($query, string $from) => $query->whereDate('timestamp', '>=', $from))
+            ->when($data['dateTo'] ?? null, fn ($query, string $to) => $query->whereDate('timestamp', '<=', $to))
+            ->when($data['invitation_id'] ?? null, fn ($query, string $invitationId) => $query->where('invitation_id', $invitationId))
+            ->orderByDesc('timestamp');
+    }
+
+    private function csvValue(mixed $value): string
+    {
+        $value = (string) ($value ?? '');
+
+        return '"' . str_replace('"', '""', $value) . '"';
+    }
+
     private function serializeAuditLog(AuditLog $log): array
     {
         return [
             'id' => (string) $log->id,
             'timestamp' => optional($log->timestamp)->toISOString(),
+            'eventType' => $log->event_type,
             'action' => $log->action,
             'performedBy' => $log->performed_by,
-            'performedById' => (string) $log->performed_by_id,
+            'performedById' => $log->performed_by_id ? (string) $log->performed_by_id : null,
+            'actorName' => $log->actor_name,
+            'actorId' => $log->actor_id ? (string) $log->actor_id : null,
             'targetUser' => $log->target_user,
             'targetUserId' => $log->target_user_id ? (string) $log->target_user_id : null,
             'documentTitle' => $log->document_title,
             'documentId' => $log->document_id ? (string) $log->document_id : null,
+            'invitationId' => $log->invitation_id ? (string) $log->invitation_id : null,
             'details' => $log->details,
+            'metadata' => $log->metadata,
             'ipAddress' => $log->ip_address,
         ];
     }

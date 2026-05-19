@@ -62,6 +62,7 @@ APP_NAME=DRS
 APP_ENV=local
 APP_DEBUG=true
 APP_URL=http://localhost:8000
+FRONTEND_URL=http://localhost:5173
 
 DB_CONNECTION=sqlite
 FILESYSTEM_DISK=local
@@ -77,9 +78,11 @@ For production, update the following as needed:
 - `APP_ENV=production`
 - `APP_DEBUG=false`
 - `APP_URL=https://your-domain.example`
+- `FRONTEND_URL=https://your-frontend.example`
 - database connection settings
 - file storage settings
 - mail settings
+- queue workers for invitation emails and other background jobs
 
 ## Seeded Demo Data
 

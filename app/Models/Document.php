@@ -11,6 +11,8 @@ class Document extends Model
 
     protected $fillable = [
         'document_uuid',
+        'owner_id',
+        'created_by_id',
         'user_id',
         'assigned_by_id',
         'title',
@@ -24,24 +26,34 @@ class Document extends Model
         'storage_mode',
         'days_allowed',
         'assigned_at',
+        'sent_at',
         'expires_at',
         'status',
         'review_acknowledged',
         'acknowledged_at',
         'signature_invited',
         'signature_invited_at',
+        'signature_completed',
+        'signature_completed_at',
+        'completed_at',
+        'archived_at',
     ];
 
     protected function casts(): array
     {
         return [
-            'assigned_at' => 'datetime',
-            'expires_at' => 'datetime',
             'days_allowed' => 'integer',
+            'assigned_at' => 'datetime',
+            'sent_at' => 'datetime',
+            'expires_at' => 'datetime',
             'acknowledged_at' => 'datetime',
             'signature_invited_at' => 'datetime',
+            'signature_completed_at' => 'datetime',
+            'completed_at' => 'datetime',
+            'archived_at' => 'datetime',
             'review_acknowledged' => 'boolean',
             'signature_invited' => 'boolean',
+            'signature_completed' => 'boolean',
         ];
     }
 
@@ -55,9 +67,34 @@ class Document extends Model
         return $this->belongsTo(User::class);
     }
 
+    public function owner()
+    {
+        return $this->belongsTo(User::class, 'owner_id');
+    }
+
+    public function createdBy()
+    {
+        return $this->belongsTo(User::class, 'created_by_id');
+    }
+
     public function assignedBy()
     {
         return $this->belongsTo(User::class, 'assigned_by_id');
+    }
+
+    public function assignments()
+    {
+        return $this->hasMany(DocumentAssignment::class);
+    }
+
+    public function invitations()
+    {
+        return $this->hasMany(DocumentInvitation::class);
+    }
+
+    public function fields()
+    {
+        return $this->hasMany(DocumentField::class);
     }
 
     public function comments()

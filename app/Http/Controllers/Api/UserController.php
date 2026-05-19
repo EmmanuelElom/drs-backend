@@ -194,6 +194,7 @@ class UserController extends Controller
             'email' => $user->email,
             'role' => $user->role,
             'createdAt' => optional($user->created_at)->toISOString(),
+            'updatedAt' => optional($user->updated_at)->toISOString(),
         ];
     }
 }

@@ -23,6 +23,7 @@ class User extends Authenticatable
         'email',
         'password',
         'role',
+        'jwt_token_version',
         'api_token_hash',
         'api_token_last_used_at',
     ];
@@ -46,6 +47,7 @@ class User extends Authenticatable
     {
         return [
             'email_verified_at' => 'datetime',
+            'jwt_token_version' => 'integer',
             'api_token_last_used_at' => 'datetime',
             'password' => 'hashed',
         ];
@@ -56,14 +58,34 @@ class User extends Authenticatable
         return $this->hasMany(Document::class);
     }
 
+    public function ownedDocuments()
+    {
+        return $this->hasMany(Document::class, 'owner_id');
+    }
+
+    public function createdDocuments()
+    {
+        return $this->hasMany(Document::class, 'created_by_id');
+    }
+
     public function comments()
     {
         return $this->hasMany(Comment::class);
     }
 
+    public function authoredComments()
+    {
+        return $this->hasMany(Comment::class, 'user_id');
+    }
+
     public function signatures()
     {
         return $this->hasMany(Signature::class);
+    }
+
+    public function authoredSignatures()
+    {
+        return $this->hasMany(Signature::class, 'user_id');
     }
 
     public function performedAuditLogs()
@@ -74,5 +96,10 @@ class User extends Authenticatable
     public function targetAuditLogs()
     {
         return $this->hasMany(AuditLog::class, 'target_user_id');
+    }
+
+    public function assignedDocuments()
+    {
+        return $this->hasMany(Document::class, 'user_id');
     }
 }

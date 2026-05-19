@@ -14,12 +14,21 @@ return new class extends Migration
         Schema::create('comments', function (Blueprint $table) {
             $table->id();
             $table->foreignId('document_id')->constrained('documents')->cascadeOnDelete();
-            $table->foreignId('user_id')->constrained()->cascadeOnDelete();
-            $table->longText('selected_text');
+            $table->foreignId('invitation_id')->nullable()->constrained('document_invitations')->nullOnDelete();
+            $table->foreignId('user_id')->nullable()->constrained('users')->nullOnDelete();
+            $table->string('author_name');
+            $table->string('author_email')->nullable();
+            $table->longText('selected_text')->nullable();
             $table->longText('comment');
+            $table->foreignId('parent_comment_id')->nullable()->constrained('comments')->nullOnDelete();
+            $table->unsignedInteger('page')->nullable();
+            $table->json('annotation_metadata')->nullable();
+            $table->timestamp('resolved_at')->nullable();
             $table->timestamps();
 
             $table->index(['document_id', 'user_id']);
+            $table->index(['document_id', 'invitation_id']);
+            $table->index('parent_comment_id');
         });
     }
 

@@ -2,12 +2,14 @@
 
 namespace Tests\Feature;
 
+use App\Mail\DocumentInvitationMail;
 use App\Models\AppSetting;
 use App\Models\Document;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Hash;
+use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
 use Tests\TestCase;
@@ -26,6 +28,7 @@ class ApiWorkflowTest extends TestCase
         ]);
 
         $token = $this->loginAndGetToken('admin', 'admin123');
+        Mail::fake();
 
         $this->withHeader('Authorization', "Bearer {$token}")
             ->postJson('/api/users', [
@@ -51,6 +54,12 @@ class ApiWorkflowTest extends TestCase
 
         $documentId = $createDocument['documentId'];
 
+        Mail::assertQueued(DocumentInvitationMail::class, function (DocumentInvitationMail $mail) use ($reviewer, $documentId) {
+            return $mail->data['invitation_type'] === 'review'
+                && $mail->data['recipient_email'] === $reviewer->email
+                && Str::endsWith($mail->data['action_url'], "/review/{$documentId}");
+        });
+
         $this->withHeader('Authorization', "Bearer {$token}")
             ->postJson("/api/documents/{$documentId}/days", [
                 'days_allowed' => 9,
@@ -62,6 +71,12 @@ class ApiWorkflowTest extends TestCase
             ->postJson("/api/documents/{$documentId}/invite-signature")
             ->assertOk()
             ->assertJsonPath('data.signatureInvited', true);
+
+        Mail::assertQueued(DocumentInvitationMail::class, function (DocumentInvitationMail $mail) use ($reviewer, $documentId) {
+            return $mail->data['invitation_type'] === 'signature'
+                && $mail->data['recipient_email'] === $reviewer->email
+                && Str::endsWith($mail->data['action_url'], "/sign/{$documentId}");
+        });
 
         $this->withHeader('Authorization', "Bearer {$token}")
             ->deleteJson("/api/documents/{$documentId}")
@@ -251,6 +266,7 @@ class ApiWorkflowTest extends TestCase
         ]);
 
         Storage::fake('local');
+        Mail::fake();
 
         $token = $this->loginAndGetToken('admin', 'admin123');
 
@@ -284,6 +300,12 @@ class ApiWorkflowTest extends TestCase
 
         $documentId = $response->json('data.documentId');
         $document = Document::query()->where('document_uuid', $documentId)->firstOrFail();
+
+        Mail::assertQueued(DocumentInvitationMail::class, function (DocumentInvitationMail $mail) use ($user, $documentId) {
+            return $mail->data['invitation_type'] === 'review'
+                && $mail->data['recipient_email'] === $user->email
+                && Str::endsWith($mail->data['action_url'], "/review/{$documentId}");
+        });
 
         $this->assertSame('upload', $document->storage_mode);
         $this->assertNotNull($document->file_path);
