@@ -13,13 +13,17 @@ use App\Models\NotificationEvent;
 use App\Models\Signature;
 use App\Models\User;
 use App\Services\AuditLogger;
+use App\Services\SignedPdfService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Mail;
 use Illuminate\Support\Str;
 
 class DocumentInvitationController extends Controller
 {
-    public function __construct(private readonly AuditLogger $auditLogger)
+    public function __construct(
+        private readonly AuditLogger $auditLogger,
+        private readonly SignedPdfService $signedPdfService
+    )
     {
     }
 
@@ -87,7 +91,34 @@ class DocumentInvitationController extends Controller
         abort_if(count($normalizedEmails) !== count(array_unique($normalizedEmails)), 422, 'Duplicate recipient email addresses are not allowed.');
 
         if ($data['invitationType'] === 'sign') {
-            abort_unless($document->fields()->where('field_type', 'signature')->exists(), 422, 'Signature invitations require at least one signature field.');
+            $signatureFields = $document->fields()->where('field_type', 'signature')->get();
+            abort_unless($signatureFields->isNotEmpty(), 422, 'Signature invitations require at least one signature field.');
+
+            $assignedRecipientEmails = $signatureFields
+                ->pluck('assigned_recipient_email')
+                ->filter()
+                ->map(fn (string $email) => Str::lower(trim($email)))
+                ->values();
+
+            abort_if($assignedRecipientEmails->isEmpty(), 422, 'Assign signature fields to recipients before sending signature invitations.');
+
+            $unassignedFields = $signatureFields->filter(function (DocumentField $field) {
+                return blank($field->assigned_recipient_email);
+            });
+            abort_if($unassignedFields->isNotEmpty(), 422, 'Assign every signature field to a recipient before sending signature invitations.');
+
+            $unknownAssignedFields = $signatureFields->filter(function (DocumentField $field) use ($normalizedEmails) {
+                return ! in_array(Str::lower(trim((string) $field->assigned_recipient_email)), $normalizedEmails, true);
+            });
+            abort_if($unknownAssignedFields->isNotEmpty(), 422, 'Signature fields must be assigned to one of the invited recipients.');
+
+            $recipientsWithoutFields = collect($normalizedEmails)->filter(function (string $email) use ($signatureFields) {
+                return ! $signatureFields->contains(function (DocumentField $field) use ($email) {
+                    return Str::lower(trim((string) $field->assigned_recipient_email)) === $email;
+                });
+            });
+
+            abort_if($recipientsWithoutFields->isNotEmpty(), 422, 'Every signer needs at least one signature field assigned.');
         }
 
         $expiresAt = now()->copy()->addDays((int) ($data['reviewPeriodDays'] ?? 7));
@@ -247,7 +278,7 @@ class DocumentInvitationController extends Controller
 
     public function access(Request $request, string $token)
     {
-        $invitation = $this->resolveInvitationFromToken($token);
+        $invitation = $this->resolveInvitationFromToken($token, true);
         $document = $invitation->document()->with(['owner', 'createdBy', 'user', 'assignedBy', 'fields', 'comments.user', 'comments.invitation', 'signatures.user', 'signatures.invitation', 'invitations'])->firstOrFail();
 
         if ($invitation->status === 'pending') {
@@ -372,17 +403,22 @@ class DocumentInvitationController extends Controller
             'document_field_id' => ['nullable', 'exists:document_fields,id'],
         ]);
 
-        $requiredFields = $document->fields()->where('field_type', 'signature')->where('required', true)->get();
-        abort_if($requiredFields->isEmpty(), 422, 'Signature invitations require at least one signature field.');
+        $eligibleFields = $this->signedPdfService->resolveSignatureFieldsForInvitation($document, $invitation);
+        abort_if($eligibleFields->isEmpty(), 422, 'No signature fields are assigned to this invitation.');
 
         if (! empty($data['document_field_id'])) {
             $field = DocumentField::query()->findOrFail($data['document_field_id']);
             abort_unless($field->document_id === $document->id, 422, 'The signature field must belong to the same document.');
+            abort_unless(
+                $eligibleFields->contains(fn (DocumentField $eligibleField) => (string) $eligibleField->id === (string) $field->id),
+                422,
+                'The signature field is not assigned to this invitation.'
+            );
         }
 
         $this->markInvitationViewed($request, $document, $invitation);
 
-        $signatures = $requiredFields->map(function (DocumentField $field) use ($request, $document, $invitation, $data) {
+        $signatures = $eligibleFields->map(function (DocumentField $field) use ($request, $document, $invitation, $data) {
             return Signature::query()->create([
                 'document_id' => $document->id,
                 'invitation_id' => $invitation->id,
@@ -397,17 +433,13 @@ class DocumentInvitationController extends Controller
             ]);
         })->values();
 
-        $document->forceFill([
-            'status' => 'signed',
-            'signature_completed' => true,
-            'signature_completed_at' => now(),
-            'completed_at' => now(),
-        ])->save();
-
         $invitation->forceFill([
             'status' => 'completed',
             'completed_at' => now(),
         ])->save();
+
+        $this->signedPdfService->refresh($document);
+        $this->signedPdfService->finalizeDocumentIfComplete($document);
 
         $this->auditLogger->recordAnonymous(
             action: 'signature_added',
@@ -433,6 +465,10 @@ class DocumentInvitationController extends Controller
             'message' => 'Signing completed successfully.',
             'data' => [
                 'invitation' => $this->serializeInvitation($document->fresh(), $invitation->fresh()),
+                'document' => $this->serializeAccessDocument(
+                    $document->fresh(['owner', 'createdBy', 'user', 'assignedBy', 'fields', 'comments.user', 'comments.invitation', 'signatures.user', 'signatures.invitation', 'invitations']),
+                    $invitation->fresh()
+                ),
                 'signatures' => $signatures->map(fn (Signature $signature) => $this->serializeSignature($document, $signature))->values(),
             ],
         ]);
@@ -490,8 +526,9 @@ class DocumentInvitationController extends Controller
             'status' => 'reviewed',
             'review_acknowledged' => true,
             'acknowledged_at' => now(),
-            'completed_at' => now(),
         ])->save();
+
+        $this->signedPdfService->finalizeDocumentIfComplete($document);
 
         $this->auditLogger->recordAnonymous(
             action: 'review_completed',
@@ -704,6 +741,9 @@ class DocumentInvitationController extends Controller
 
     private function serializeAccessDocument(Document $document, DocumentInvitation $invitation): array
     {
+        $signatureFields = $this->signedPdfService->resolveSignatureFieldsForInvitation($document, $invitation);
+        $signatures = $this->signedPdfService->resolveAccessibleSignaturesForInvitation($document, $invitation);
+
         return [
             'id' => (string) $document->id,
             'documentId' => $document->document_uuid,
@@ -714,14 +754,20 @@ class DocumentInvitationController extends Controller
             'fileSize' => $document->file_size,
             'status' => $document->status,
             'fileData' => $document->file_data,
-            'signatureFields' => $document->fields->map(fn (DocumentField $field) => [
+            'signatureFields' => $signatureFields->map(fn (DocumentField $field) => [
                 'id' => (string) $field->id,
+                'invitationId' => $field->invitation_id ? (string) $field->invitation_id : null,
+                'assignedRecipientEmail' => $field->assigned_recipient_email,
+                'fieldType' => $field->field_type,
                 'x' => (string) $field->x,
                 'y' => (string) $field->y,
                 'width' => (string) $field->width,
                 'height' => (string) $field->height,
                 'page' => $field->page,
+                'required' => (bool) $field->required,
+                'metadata' => $field->metadata,
             ])->values(),
+            'signatures' => $signatures->map(fn (Signature $signature) => $this->serializeSignature($document, $signature))->values(),
             'comments' => $document->comments->map(fn (Comment $comment) => [
                 'id' => (string) $comment->id,
                 'documentId' => $document->document_uuid,
@@ -737,7 +783,7 @@ class DocumentInvitationController extends Controller
                 'canEdit' => false,
                 'canReview' => (bool) $invitation->can_review,
                 'canComment' => (bool) $invitation->can_comment,
-                'canSign' => (bool) $invitation->can_sign,
+                'canSign' => (bool) $invitation->can_sign && $signatureFields->isNotEmpty(),
                 'canDelete' => false,
                 'canDownload' => true,
             ],
@@ -765,8 +811,12 @@ class DocumentInvitationController extends Controller
         return [
             'id' => (string) $signature->id,
             'documentId' => $document->document_uuid,
+            'invitationId' => $signature->invitation_id ? (string) $signature->invitation_id : null,
+            'documentFieldId' => $signature->document_field_id ? (string) $signature->document_field_id : null,
             'userId' => $signature->user_id ? (string) $signature->user_id : null,
             'username' => $signature->signer_name ?: $signature->user?->username,
+            'signerName' => $signature->signer_name ?: $signature->user?->username,
+            'signerEmail' => $signature->signer_email,
             'signatureData' => $signature->signature_data,
             'signedAt' => optional($signature->signed_at)->toISOString(),
             'ipAddress' => $signature->ip_address,

@@ -13,6 +13,7 @@ use App\Models\NotificationEvent;
 use App\Models\User;
 use App\Services\AuditLogger;
 use App\Services\DocumentCompletionNotifier;
+use App\Services\SignedPdfService;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\Mail;
@@ -26,7 +27,8 @@ class DocumentController extends Controller
 
     public function __construct(
         private readonly AuditLogger $auditLogger,
-        private readonly DocumentCompletionNotifier $completionNotifier
+        private readonly DocumentCompletionNotifier $completionNotifier,
+        private readonly SignedPdfService $signedPdfService
     )
     {
     }
@@ -338,6 +340,8 @@ class DocumentController extends Controller
             'file' => ['required', 'file', 'mimetypes:application/pdf,text/plain', 'max:10240'],
         ]);
 
+        $shouldResetWorkflow = in_array($document->status ?? null, ['signed', 'completed'], true) || (bool) $document->signature_completed || filled($document->completed_at);
+
         $this->deleteStoredFile($document);
 
         $uploadedFile = $request->file('file');
@@ -350,6 +354,17 @@ class DocumentController extends Controller
             'file_data' => $storedFile['file_data'],
             'file_disk' => $storedFile['file_disk'],
             'file_path' => $storedFile['file_path'],
+            'signed_file_disk' => null,
+            'signed_file_path' => null,
+            'signed_file_generated_at' => null,
+            'review_acknowledged' => $shouldResetWorkflow ? false : (bool) $document->review_acknowledged,
+            'acknowledged_at' => $shouldResetWorkflow ? null : $document->acknowledged_at,
+            'signature_invited' => $shouldResetWorkflow ? false : (bool) $document->signature_invited,
+            'signature_invited_at' => $shouldResetWorkflow ? null : $document->signature_invited_at,
+            'signature_completed' => false,
+            'signature_completed_at' => null,
+            'completed_at' => null,
+            'status' => $shouldResetWorkflow ? 'saved' : $document->status,
             'storage_mode' => 'upload',
         ])->save();
 
@@ -1001,14 +1016,18 @@ class DocumentController extends Controller
 
     private function deleteStoredFile(Document $document): void
     {
-        if (! $document->file_path) {
-            return;
-        }
-
         $disk = $document->file_disk ?: config('filesystems.default');
 
-        if (Storage::disk($disk)->exists($document->file_path)) {
+        if ($document->file_path && Storage::disk($disk)->exists($document->file_path)) {
             Storage::disk($disk)->delete($document->file_path);
+        }
+
+        if ($document->signed_file_path) {
+            $signedDisk = $document->signed_file_disk ?: $disk;
+
+            if (Storage::disk($signedDisk)->exists($document->signed_file_path)) {
+                Storage::disk($signedDisk)->delete($document->signed_file_path);
+            }
         }
     }
 
@@ -1016,19 +1035,34 @@ class DocumentController extends Controller
     {
         $this->authorize('view', $document);
 
-        if (! $document->file_path) {
-            abort(404, 'File not found.');
-        }
-
         $disk = $document->file_disk ?: config('filesystems.default');
+        $filePath = $document->file_path;
+        $downloadName = $document->file_name ?? ($document->title ? Str::slug($document->title) . '.pdf' : 'document.pdf');
+        $isSignedDocument = (bool) $document->signature_completed || (bool) $document->signature_completed_at || filled($document->signed_file_path);
 
-        if (! Storage::disk($disk)->exists($document->file_path)) {
+        if ($isSignedDocument) {
+            $signedDocumentPath = $this->signedPdfService->ensure($document);
+
+            if ($signedDocumentPath) {
+                $filePath = $signedDocumentPath;
+                $disk = $document->signed_file_disk ?: $disk;
+                $downloadName = $this->resolveSignedDownloadName($document);
+            }
+        }
+
+        if (! $filePath) {
             abort(404, 'File not found.');
         }
 
-        $mimeType = $document->file_type
-            ?: Storage::disk($disk)->mimeType($document->file_path)
-            ?: 'application/pdf';
+        if (! Storage::disk($disk)->exists($filePath)) {
+            abort(404, 'File not found.');
+        }
+
+        $mimeType = $filePath === $document->signed_file_path
+            ? 'application/pdf'
+            : ($document->file_type
+                ?: Storage::disk($disk)->mimeType($filePath)
+                ?: 'application/pdf');
 
         $this->auditLogger->fromRequest(
             action: $download ? 'document_downloaded' : 'document_previewed',
@@ -1039,8 +1073,8 @@ class DocumentController extends Controller
 
         if ($download) {
             return Storage::disk($disk)->download(
-                $document->file_path,
-                $document->file_name ?? basename($document->file_path),
+                $filePath,
+                $downloadName,
                 [
                     'Content-Type' => $mimeType,
                     'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
@@ -1050,13 +1084,30 @@ class DocumentController extends Controller
         }
 
         return Storage::disk($disk)->response(
-            $document->file_path,
-            $document->file_name ?? basename($document->file_path),
+            $filePath,
+            $downloadName,
             [
                 'Content-Type' => $mimeType,
                 'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
                 'Pragma' => 'no-cache',
             ]
         );
+    }
+
+    private function resolveSignedDownloadName(Document $document): string
+    {
+        $baseName = $document->file_name ?: ($document->title ?: 'document');
+        $extension = pathinfo($baseName, PATHINFO_EXTENSION);
+
+        if ($extension !== '' && strcasecmp($extension, 'pdf') === 0) {
+            return $baseName;
+        }
+
+        $stem = pathinfo($baseName, PATHINFO_FILENAME);
+        if ($stem === '') {
+            $stem = Str::slug($document->title ?: 'document');
+        }
+
+        return $stem . '.pdf';
     }
 }

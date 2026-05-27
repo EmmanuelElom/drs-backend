@@ -1,0 +1,415 @@
+38:        $user = $request->user();
+39:        $this->authorize('viewAny', Document::class);
+41:        $data = $request->validate([
+55:            ->with(['owner', 'createdBy', 'user', 'assignedBy', 'fields', 'comments.user', 'comments.invitation', 'signatures.user', 'signatures.invitation', 'invitations']);
+57:        if ($user->role !== 'admin') {
+58:            $query->where(function ($inner) use ($user, $scope) {
+60:                    $inner->where('owner_id', $user->id)
+61:                        ->whereIn('status', ['draft', 'saved', 'sent']);
+66:                    $inner->where('user_id', $user->id);
+71:                    $inner->where('owner_id', $user->id)
+72:                        ->whereNotNull('sent_at');
+77:                    $inner->where(function ($owned) use ($user) {
+78:                        $owned->where('owner_id', $user->id)
+79:                            ->orWhere('created_by_id', $user->id)
+80:                            ->orWhere('user_id', $user->id);
+81:                    })->where(function ($completed) {
+82:                        $completed->whereIn('status', ['reviewed', 'signed', 'completed'])
+83:                            ->orWhereNotNull('completed_at');
+89:                    $inner->where(function ($owned) use ($user) {
+90:                        $owned->where('owner_id', $user->id)
+91:                            ->orWhere('created_by_id', $user->id)
+92:                            ->orWhere('user_id', $user->id);
+93:                    })->whereNotNull('archived_at');
+97:                $inner->where('owner_id', $user->id)
+98:                    ->orWhere('created_by_id', $user->id)
+99:                    ->orWhere('user_id', $user->id);
+102:            $query->whereIn('status', ['draft', 'saved', 'sent']);
+104:            $query->whereNotNull('user_id');
+106:            $query->whereNotNull('sent_at');
+108:            $query->where(function ($completed) {
+109:                $completed->whereIn('status', ['reviewed', 'signed', 'completed'])
+110:                    ->orWhereNotNull('completed_at');
+113:            $query->whereNotNull('archived_at');
+117:            ->when($data['search'] ?? null, function ($query, string $search) {
+118:                $query->where(function ($inner) use ($search) {
+119:                    $inner->where('title', 'like', "%{$search}%")
+120:                        ->orWhere('content', 'like', "%{$search}%")
+121:                        ->orWhere('file_name', 'like', "%{$search}%");
+124:            ->when($data['status'] ?? null, fn ($query, string $status) => $query->where('status', $status))
+125:            ->when($data['storage_mode'] ?? null, fn ($query, string $storageMode) => $query->where('storage_mode', $storageMode))
+126:            ->when($data['user_id'] ?? null, fn ($query, string $userId) => $query->where('user_id', $userId))
+127:            ->orderByDesc('id');
+129:        if ($request->boolean('all') || ($scope === 'all' && $user->role === 'admin')) {
+130:            $documents = $query->get()->map(fn (Document $document) => $this->serializeDocument($document))->values();
+132:            return response()->json([
+139:        $paginator = $query->paginate($perPage, ['*'], 'page', $page);
+141:        return response()->json([
+142:            'data' => $paginator->getCollection()
+143:                ->map(fn (Document $document) => $this->serializeDocument($document))
+144:                ->values(),
+146:                'currentPage' => $paginator->currentPage(),
+147:                'perPage' => $paginator->perPage(),
+148:                'total' => $paginator->total(),
+149:                'lastPage' => $paginator->lastPage(),
+150:                'from' => $paginator->firstItem(),
+151:                'to' => $paginator->lastItem(),
+158:        $this->authorize('create', Document::class);
+160:        $storageMode = $this->getStorageMode();
+162:        $data = $request->validate([
+165:            'status' => ['nullable', 'in:draft,saved,sent,in-review,reviewed,signed,completed,archived'],
+175:        $uploadedFile = $request->file('file');
+176:        $hasUpload = $uploadedFile instanceof UploadedFile && $uploadedFile->isValid();
+193:        $storedFile = $hasUpload ? $this->storeUploadedFile($uploadedFile) : null;
+195:        $status = $data['status'] ?? ($hasAssignment ? 'in-review' : (($hasUpload || $hasInlineFile || filled($data['content'] ?? null)) ? 'saved' : 'draft'));
+196:        $currentUser = $request->user();
+198:        $document = Document::query()->create([
+200:            'owner_id' => $currentUser->id,
+201:            'created_by_id' => $currentUser->id,
+203:            'assigned_by_id' => $hasAssignment ? $currentUser->id : null,
+216:            'expires_at' => ($hasAssignment && $daysAllowed) ? $assignedAt->copy()->addDays($daysAllowed) : null,
+224:            DocumentAssignment::query()->create([
+225:                'document_id' => $document->id,
+227:                'assigned_by' => $currentUser->id,
+229:                'expires_at' => $document->expires_at,
+231:                'status' => 'in-review',
+235:        $document->load(['user', 'owner', 'createdBy', 'fields', 'invitations']);
+237:        $this->auditLogger->fromRequest(
+240:            targetUser: $hasAssignment ? $document->user : null,
+243:                ? sprintf('Assigned "%s" to %s.', $document->title, $document->user?->username)
+244:                : sprintf('Created document "%s".', $document->title)
+248:            $this->auditLogger->fromRequest(
+251:                targetUser: $hasAssignment ? $document->user : null,
+253:                details: sprintf('Uploaded "%s".', $document->title)
+258:            $this->queueInvitationEmail(
+260:                recipient: $document->user,
+266:        return response()->json([
+268:            'data' => $this->serializeDocument($document, true, $currentUser),
+274:        $this->authorize('view', $document);
+276:        $document->load(['owner', 'createdBy', 'user', 'assignedBy', 'fields', 'comments.user', 'comments.invitation', 'signatures.user', 'signatures.invitation', 'invitations', 'assignments']);
+278:        return response()->json([
+279:            'data' => $this->serializeDocument($document, true, $request->user()),
+285:        $this->authorize('update', $document);
+287:        $data = $request->validate([
+290:            'status' => ['nullable', 'in:draft,saved,sent,in-review,reviewed,signed,completed,archived'],
+298:        $document->fill($data)->save();
+300:        $this->auditLogger->fromRequest(
+304:            details: sprintf('Updated document "%s".', $document->title)
+307:        return response()->json([
+309:            'data' => $this->serializeDocument($document->fresh(['owner', 'createdBy', 'user', 'assignedBy', 'fields', 'comments.user', 'comments.invitation', 'signatures.user', 'signatures.invitation', 'invitations', 'assignments']), true, $request->user()),
+315:        $this->authorize('archive', $document);
+317:        $document->forceFill([
+320:        ])->save();
+322:        $this->auditLogger->fromRequest(
+326:            details: sprintf('Archived document "%s".', $document->title)
+329:        return response()->json([
+331:            'data' => $this->serializeDocument($document->fresh(['owner', 'createdBy', 'user', 'assignedBy', 'fields', 'comments.user', 'comments.invitation', 'signatures.user', 'signatures.invitation', 'invitations', 'assignments']), true, $request->user()),
+337:        $this->authorize('update', $document);
+339:        $data = $request->validate([
+343:        $shouldResetWorkflow = in_array($document->status ?? null, ['signed', 'completed'], true) || (bool) $document->signature_completed || filled($document->completed_at);
+345:        $this->deleteStoredFile($document);
+347:        $uploadedFile = $request->file('file');
+348:        $storedFile = $this->storeUploadedFile($uploadedFile);
+350:        $document->forceFill([
+360:            'review_acknowledged' => $shouldResetWorkflow ? false : (bool) $document->review_acknowledged,
+361:            'acknowledged_at' => $shouldResetWorkflow ? null : $document->acknowledged_at,
+362:            'signature_invited' => $shouldResetWorkflow ? false : (bool) $document->signature_invited,
+363:            'signature_invited_at' => $shouldResetWorkflow ? null : $document->signature_invited_at,
+367:            'status' => $shouldResetWorkflow ? 'saved' : $document->status,
+369:        ])->save();
+371:        $this->auditLogger->fromRequest(
+375:            details: sprintf('Uploaded file for "%s".', $document->title)
+378:        return response()->json([
+380:            'data' => $this->serializeDocument($document->fresh(['owner', 'createdBy', 'user', 'assignedBy', 'fields', 'comments.user', 'comments.invitation', 'signatures.user', 'signatures.invitation', 'invitations', 'assignments']), true, $request->user()),
+386:        return $this->streamDocumentFile($request, $document, false);
+391:        return $this->streamDocumentFile($request, $document, true);
+396:        return $this->download($request, $document);
+401:        $this->authorize('acknowledge', $document);
+403:        $document->forceFill([
+407:        ])->save();
+409:        $document->assignments()->update([
+415:        $document->load('user');
+417:        $this->auditLogger->fromRequest(
+420:            targetUser: $document->user,
+422:            details: sprintf('Marked "%s" as reviewed.', $document->title)
+425:        $this->completionNotifier->notify(
+429:            actorName: $request->user()->username
+432:        return response()->json([
+434:            'data' => $this->serializeDocument($document),
+440:        $this->authorize('inviteSignature', $document);
+442:        $document->forceFill([
+446:        ])->save();
+448:        $document->assignments()->update([
+454:        $document->load('user');
+456:        $this->auditLogger->fromRequest(
+459:            targetUser: $document->user,
+461:            details: sprintf('Invited %s to sign "%s".', $document->user?->username, $document->title)
+464:        $this->queueInvitationEmail(
+466:            recipient: $document->user,
+467:            sender: $request->user(),
+471:        return response()->json([
+473:            'data' => $this->serializeDocument($document),
+479:        $this->authorize('reassign', $document);
+481:        $data = $request->validate([
+485:        $previousUser = $document->user;
+486:        $newUser = User::query()->findOrFail($data['user_id']);
+488:        $daysAllowed = (int) $document->days_allowed;
+490:        $document->forceFill([
+491:            'user_id' => $newUser->id,
+493:            'expires_at' => now()->copy()->addDays($daysAllowed),
+500:            'status' => 'in-review',
+501:        ])->save();
+503:        $document->assignments()->delete();
+504:        DocumentAssignment::query()->create([
+505:            'document_id' => $document->id,
+506:            'user_id' => $newUser->id,
+507:            'assigned_by' => $request->user()->id,
+509:            'expires_at' => now()->copy()->addDays($daysAllowed),
+511:            'status' => 'in-review',
+514:        $document->load('user');
+516:        $this->auditLogger->fromRequest(
+523:                $document->title,
+524:                $previousUser?->username,
+525:                $newUser->username
+529:        $this->queueInvitationEmail(
+532:            sender: $request->user(),
+536:        return response()->json([
+538:            'data' => $this->serializeDocument($document),
+544:        $this->authorize('updateDays', $document);
+546:        $data = $request->validate([
+550:        $startDate = $document->assigned_at ?? now();
+554:        $document->forceFill([
+556:            'expires_at' => $startDate->copy()->addDays($daysAllowed),
+557:        ])->save();
+559:        $document->assignments()->update([
+561:            'expires_at' => $startDate->copy()->addDays($daysAllowed),
+564:        $document->load('user');
+566:        $this->auditLogger->fromRequest(
+569:            targetUser: $document->user,
+571:            details: sprintf('Updated review days for "%s" to %d.', $document->title, $document->days_allowed)
+574:        return response()->json([
+576:            'data' => $this->serializeDocument($document),
+582:        $this->authorize('updateStatus', $document);
+584:        $data = $request->validate([
+585:            'status' => ['required', 'in:pending,in-review,reviewed,signed'],
+588:        $document->forceFill([
+590:        ])->save();
+592:        $document->load('user');
+594:        $this->auditLogger->fromRequest(
+597:            targetUser: $document->user,
+599:            details: sprintf('Updated status for "%s" to %s.', $document->title, $document->status)
+602:        return response()->json([
+604:            'data' => $this->serializeDocument($document),
+610:        $this->authorize('delete', $document);
+612:        $title = $document->title;
+613:        $targetUser = $document->user;
+614:        $this->deleteStoredFile($document);
+616:        $document->delete();
+618:        $this->auditLogger->fromRequest(
+626:        return response()->json([
+633:        $actingUser ??= request()->user();
+636:            'id' => (string) $document->id,
+637:            'documentId' => $document->document_uuid,
+638:            'ownerId' => $document->owner_id ? (string) $document->owner_id : null,
+639:            'createdById' => $document->created_by_id ? (string) $document->created_by_id : null,
+640:            'userId' => $document->user_id ? (string) $document->user_id : null,
+641:            'username' => $document->relationLoaded('user') && $document->user ? $document->user->username : null,
+642:            'ownerUsername' => $document->relationLoaded('owner') && $document->owner ? $document->owner->username : null,
+643:            'createdByUsername' => $document->relationLoaded('createdBy') && $document->createdBy ? $document->createdBy->username : null,
+644:            'assignedAt' => optional($document->assigned_at)->toISOString(),
+645:            'sentAt' => optional($document->sent_at)->toISOString(),
+646:            'expiresAt' => optional($document->expires_at)->toISOString(),
+647:            'daysAllowed' => $document->days_allowed,
+648:            'title' => $document->title,
+649:            'content' => $document->content,
+650:            'fileType' => $document->file_type,
+651:            'reviewAcknowledged' => (bool) $document->review_acknowledged,
+652:            'acknowledgedAt' => optional($document->acknowledged_at)->toISOString(),
+653:            'signatureInvited' => (bool) $document->signature_invited,
+654:            'signatureInvitedAt' => optional($document->signature_invited_at)->toISOString(),
+655:            'signatureCompleted' => (bool) $document->signature_completed,
+656:            'signatureCompletedAt' => optional($document->signature_completed_at)->toISOString(),
+657:            'completedAt' => optional($document->completed_at)->toISOString(),
+658:            'archivedAt' => optional($document->archived_at)->toISOString(),
+659:            'createdAt' => optional($document->created_at)->toISOString(),
+660:            'updatedAt' => optional($document->updated_at)->toISOString(),
+661:            'status' => $document->status,
+662:            'fileName' => $document->file_name,
+663:            'fileSize' => $document->file_size,
+664:            'assignedBy' => $document->relationLoaded('assignedBy') && $document->assignedBy ? $document->assignedBy->username : null,
+665:            'signatureFields' => $document->relationLoaded('fields')
+666:                ? $document->fields->map(fn (DocumentField $field) => $this->serializeField($document, $field))->values()
+668:            'comments' => $includeRelations && $document->relationLoaded('comments')
+669:                ? $document->comments->map(fn ($comment) => $this->serializeComment($document, $comment))->values()
+671:            'signatures' => $includeRelations && $document->relationLoaded('signatures')
+672:                ? $document->signatures->map(fn ($signature) => $this->serializeSignature($document, $signature))->values()
+674:            'invitations' => $includeRelations && $document->relationLoaded('invitations')
+675:                ? $document->invitations->map(fn (DocumentInvitation $invitation) => $this->serializeInvitation($document, $invitation))->values()
+677:            'permissions' => $this->serializePermissions($document, $actingUser),
+678:            'storageMode' => $document->storage_mode,
+679:            'fileData' => $this->resolveDocumentFileData($document),
+686:            'id' => (string) $comment->id,
+687:            'documentId' => $document->document_uuid,
+688:            'invitationId' => $comment->invitation_id ? (string) $comment->invitation_id : null,
+689:            'userId' => $comment->user_id ? (string) $comment->user_id : null,
+690:            'username' => $comment->author_name ?: $comment->user?->username,
+691:            'authorName' => $comment->author_name ?: $comment->user?->username,
+692:            'authorEmail' => $comment->author_email,
+693:            'selectedText' => $comment->selected_text,
+694:            'comment' => $comment->comment,
+695:            'parentCommentId' => $comment->parent_comment_id ? (string) $comment->parent_comment_id : null,
+696:            'page' => $comment->page,
+697:            'annotationMetadata' => $comment->annotation_metadata,
+698:            'resolvedAt' => optional($comment->resolved_at)->toISOString(),
+699:            'createdAt' => optional($comment->created_at)->toISOString(),
+700:            'timestamp' => optional($comment->created_at)->toISOString(),
+701:            'updatedAt' => optional($comment->updated_at)->toISOString(),
+708:            'id' => (string) $signature->id,
+709:            'documentId' => $document->document_uuid,
+710:            'invitationId' => $signature->invitation_id ? (string) $signature->invitation_id : null,
+711:            'documentFieldId' => $signature->document_field_id ? (string) $signature->document_field_id : null,
+712:            'userId' => $signature->user_id ? (string) $signature->user_id : null,
+713:            'username' => $signature->signer_name ?: $signature->user?->username,
+714:            'signerName' => $signature->signer_name ?: $signature->user?->username,
+715:            'signerEmail' => $signature->signer_email,
+716:            'signatureData' => $signature->signature_data,
+717:            'signedAt' => optional($signature->signed_at)->toISOString(),
+718:            'ipAddress' => $signature->ip_address,
+719:            'createdAt' => optional($signature->created_at)->toISOString(),
+720:            'updatedAt' => optional($signature->updated_at)->toISOString(),
+727:            'id' => (string) $invitation->id,
+728:            'documentId' => $document->document_uuid,
+729:            'recipientName' => $invitation->recipient_name,
+730:            'recipientEmail' => $invitation->recipient_email,
+731:            'invitationType' => $invitation->invitation_type,
+732:            'status' => $invitation->status,
+733:            'recipientOrder' => $invitation->recipient_order,
+734:            'canReview' => (bool) $invitation->can_review,
+735:            'canComment' => (bool) $invitation->can_comment,
+736:            'canSign' => (bool) $invitation->can_sign,
+737:            'viewedAt' => optional($invitation->viewed_at)->toISOString(),
+738:            'completedAt' => optional($invitation->completed_at)->toISOString(),
+739:            'revokedAt' => optional($invitation->revoked_at)->toISOString(),
+740:            'expiresAt' => optional($invitation->expires_at)->toISOString(),
+741:            'createdAt' => optional($invitation->created_at)->toISOString(),
+742:            'updatedAt' => optional($invitation->updated_at)->toISOString(),
+749:            'id' => (string) $field->id,
+750:            'documentId' => $document->document_uuid,
+751:            'invitationId' => $field->invitation_id ? (string) $field->invitation_id : null,
+752:            'assignedRecipientEmail' => $field->assigned_recipient_email,
+753:            'fieldType' => $field->field_type,
+754:            'page' => $field->page,
+755:            'x' => (string) $field->x,
+756:            'y' => (string) $field->y,
+757:            'width' => (string) $field->width,
+758:            'height' => (string) $field->height,
+759:            'required' => (bool) $field->required,
+760:            'metadata' => $field->metadata,
+761:            'createdAt' => optional($field->created_at)->toISOString(),
+762:            'updatedAt' => optional($field->updated_at)->toISOString(),
+768:        $isAdmin = $user?->role === 'admin';
+769:        $isOwner = $user && ((string) $document->owner_id === (string) $user->id || (string) $document->created_by_id === (string) $user->id);
+770:        $isAssigned = $user && (string) $document->user_id === (string) $user->id;
+771:        $hasReviewInvitation = $this->hasInvitationAccess($document, $user, permission: 'review', allowCompleted: true);
+772:        $hasCommentInvitation = $this->hasInvitationAccess($document, $user, permission: 'comment', allowCompleted: false)
+773:            || $this->hasInvitationAccess($document, $user, permission: 'review', allowCompleted: false);
+774:        $hasSignInvitation = $this->hasInvitationAccess($document, $user, permission: 'sign', allowCompleted: false);
+775:        $hasAnyInvitation = $this->hasInvitationAccess($document, $user, allowCompleted: true);
+781:            'canSign' => $isAdmin || $isOwner || $isAssigned || (bool) $document->signature_invited || $hasSignInvitation,
+793:        if (! $user || ! filled($user->email)) {
+797:        $invitations = $document->relationLoaded('invitations')
+798:            ? $document->invitations
+799:            : $document->invitations()->get();
+801:        return $invitations->contains(function (DocumentInvitation $invitation) use ($user, $permission, $allowCompleted) {
+802:            if ((string) $invitation->recipient_email !== (string) $user->email) {
+806:            if (in_array($invitation->status, ['revoked', 'expired'], true)) {
+810:            if (! $allowCompleted && $invitation->status === 'completed') {
+814:            if ($permission === 'review' && ! $invitation->can_review) {
+818:            if ($permission === 'comment' && ! $invitation->can_comment && ! $invitation->can_review) {
+822:            if ($permission === 'sign' && ! $invitation->can_sign) {
+837:            ->where('key', self::STORAGE_SETTING_KEY)
+838:            ->value('value');
+845:        if (! $recipient || ! filled($recipient->email)) {
+849:        $data = $this->buildInvitationMailData($document, $recipient, $sender, $invitationType);
+851:        Mail::to($recipient->email)->queue(
+852:            (new DocumentInvitationMail($data))->afterCommit()
+857:        NotificationEvent::query()->create([
+861:            'recipient_name' => $recipient->username,
+862:            'recipient_email' => $recipient->email,
+863:            'user_id' => $sender->id,
+864:            'document_id' => $document->id,
+877:            ? "/sign/{$document->document_uuid}"
+878:            : "/review/{$document->document_uuid}";
+879:        $typeLabel = $isSignatureInvitation ? 'Co-signee Invitation' : 'Review Invitation';
+880:        $roleLabel = $isSignatureInvitation ? 'Co-signee' : 'Reviewer';
+884:            'subject_line' => sprintf('%s: %s', $typeLabel, $document->title),
+887:            'recipient_name' => $recipient->username,
+888:            'sender_name' => $sender->username,
+889:            'sender_email' => $sender->email,
+890:            'recipient_email' => $recipient->email,
+893:            'document_title' => $document->title,
+894:            'document_id' => $document->document_uuid,
+895:            'document_status' => $document->status,
+899:                ['label' => 'Document title', 'value' => $document->title],
+900:                ['label' => 'Document ID', 'value' => $document->document_uuid],
+902:                ['label' => 'Assigned by', 'value' => $this->formatPersonLabel($sender)],
+903:                ['label' => 'Assigned at', 'value' => optional($document->assigned_at)->toDayDateTimeString() ?? 'Not available'],
+904:                ['label' => 'Expires at', 'value' => optional($document->expires_at)->toDayDateTimeString() ?? 'Not available'],
+905:                ['label' => 'Days allowed', 'value' => (string) $document->days_allowed],
+906:                ['label' => 'Current status', 'value' => $this->formatStatusLabel($document->status)],
+907:                ['label' => 'File name', 'value' => $document->file_name ?: 'Not provided'],
+908:                ['label' => 'File type', 'value' => $document->file_type ?: 'Not provided'],
+909:                ['label' => 'File size', 'value' => $this->formatFileSize($document->file_size)],
+912:                ? 'You have been invited as a co-signee. Please review the completed review context and apply your signature when you are ready.'
+935:        return $user->email
+936:            ? sprintf('%s (%s)', $user->username, $user->email)
+937:            : $user->username;
+946:        return str_replace('-', ' ', Str::headline($status));
+959:        while ($size >= 1024 && $unitIndex < count($units) - 1) {
+972:        $fileName = $file->getClientOriginalName();
+973:        $fileType = $file->getMimeType() ?: $file->getClientMimeType() ?: 'application/pdf';
+974:        $fileSize = $file->getSize() ?: 0;
+975:        $extension = strtolower($file->getClientOriginalExtension() ?: ($fileType === 'text/plain' ? 'txt' : 'pdf'));
+976:        $safeName = Str::uuid()->toString() . '.' . $extension;
+977:        $filePath = $file->storeAs('documents', $safeName, $disk);
+978:        $fileContents = file_get_contents($file->getRealPath()) ?: '';
+992:        if ($document->file_data) {
+993:            return $document->file_data;
+996:        if (! $document->file_path) {
+1000:        $disk = $document->file_disk ?: config('filesystems.default');
+1002:        if (! Storage::disk($disk)->exists($document->file_path)) {
+1006:        $mimeType = $document->file_type ?: Storage::disk($disk)->mimeType($document->file_path) ?: 'application/pdf';
+1007:        $contents = Storage::disk($disk)->get($document->file_path);
+1010:        $document->forceFill([
+1012:        ])->saveQuietly();
+1019:        $disk = $document->file_disk ?: config('filesystems.default');
+1021:        if ($document->file_path && Storage::disk($disk)->exists($document->file_path)) {
+1022:            Storage::disk($disk)->delete($document->file_path);
+1025:        if ($document->signed_file_path) {
+1026:            $signedDisk = $document->signed_file_disk ?: $disk;
+1028:            if (Storage::disk($signedDisk)->exists($document->signed_file_path)) {
+1029:                Storage::disk($signedDisk)->delete($document->signed_file_path);
+1036:        $this->authorize('view', $document);
+1038:        $disk = $document->file_disk ?: config('filesystems.default');
+1039:        $filePath = $document->file_path;
+1040:        $downloadName = $document->file_name ?? ($document->title ? Str::slug($document->title) . '.pdf' : 'document.pdf');
+1041:        $isSignedDocument = (bool) $document->signature_completed || (bool) $document->signature_completed_at || filled($document->signed_file_path);
+1044:            $signedDocumentPath = $this->signedPdfService->ensure($document);
+1048:                $disk = $document->signed_file_disk ?: $disk;
+1049:                $downloadName = $this->resolveSignedDownloadName($document);
+1057:        if (! Storage::disk($disk)->exists($filePath)) {
+1061:        $mimeType = $filePath === $document->signed_file_path
+1063:            : ($document->file_type
+1064:                ?: Storage::disk($disk)->mimeType($filePath)
+1067:        $this->auditLogger->fromRequest(
+1071:            details: sprintf('%s document "%s".', $download ? 'Downloaded' : 'Previewed', $document->title)
+1075:            return Storage::disk($disk)->download(
+1079:                    'Content-Type' => $mimeType,
+1080:                    'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+1081:                    'Pragma' => 'no-cache',
+1086:        return Storage::disk($disk)->response(
+1090:                'Content-Type' => $mimeType,
+1091:                'Cache-Control' => 'no-store, no-cache, must-revalidate, max-age=0',
+1092:                'Pragma' => 'no-cache',
+1099:        $baseName = $document->file_name ?: ($document->title ?: 'document');
+1108:            $stem = Str::slug($document->title ?: 'document');

@@ -13,11 +13,11 @@ return new class extends Migration
     {
         Schema::create('documents', function (Blueprint $table) {
             $table->id();
-            $table->string('document_uuid')->unique();
-            $table->foreignId('owner_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->foreignId('created_by_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->foreignId('user_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->foreignId('assigned_by_id')->nullable()->constrained('users')->nullOnDelete();
+            $table->string('document_uuid')->unique('documents_document_uuid_unique');
+            $table->foreignId('owner_id')->nullable()->constrained('users', indexName: 'documents_owner_id_foreign')->nullOnDelete();
+            $table->foreignId('created_by_id')->nullable()->constrained('users', indexName: 'documents_created_by_id_foreign')->nullOnDelete();
+            $table->foreignId('user_id')->nullable()->constrained('users', indexName: 'documents_user_id_foreign')->nullOnDelete();
+            $table->foreignId('assigned_by_id')->nullable()->constrained('users', indexName: 'documents_assigned_by_id_foreign')->nullOnDelete();
             $table->string('title');
             $table->longText('content')->nullable();
             $table->string('file_name')->nullable();
@@ -42,12 +42,12 @@ return new class extends Migration
             $table->timestamp('archived_at')->nullable();
             $table->timestamps();
 
-            $table->index(['owner_id', 'status']);
-            $table->index(['user_id', 'status']);
-            $table->index(['created_by_id', 'status']);
-            $table->index('expires_at');
-            $table->index('archived_at');
-            $table->index('completed_at');
+            $table->index(['owner_id', 'status'], 'documents_owner_status_index');
+            $table->index(['user_id', 'status'], 'documents_user_status_index');
+            $table->index(['created_by_id', 'status'], 'documents_created_by_status_index');
+            $table->index('expires_at', 'documents_expires_at_index');
+            $table->index('archived_at', 'documents_archived_at_index');
+            $table->index('completed_at', 'documents_completed_at_index');
         });
     }
 

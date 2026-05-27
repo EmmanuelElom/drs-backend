@@ -13,7 +13,7 @@ return new class extends Migration
     {
         Schema::create('app_settings', function (Blueprint $table) {
             $table->id();
-            $table->string('key')->unique();
+            $table->string('key')->unique('app_settings_key_unique');
             $table->longText('value');
             $table->timestamps();
         });

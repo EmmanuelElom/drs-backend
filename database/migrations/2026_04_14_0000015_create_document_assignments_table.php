@@ -10,9 +10,9 @@ return new class extends Migration
     {
         Schema::create('document_assignments', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('document_id')->constrained('documents')->cascadeOnDelete();
-            $table->foreignId('user_id')->nullable()->constrained('users')->nullOnDelete();
-            $table->foreignId('assigned_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('document_id')->constrained('documents', indexName: 'document_assignments_document_id_foreign')->cascadeOnDelete();
+            $table->foreignId('user_id')->nullable()->constrained('users', indexName: 'document_assignments_user_id_foreign')->nullOnDelete();
+            $table->foreignId('assigned_by')->nullable()->constrained('users', indexName: 'document_assignments_assigned_by_foreign')->nullOnDelete();
             $table->timestamp('assigned_at')->nullable();
             $table->timestamp('expires_at')->nullable();
             $table->unsignedInteger('days_allowed')->nullable();
@@ -25,8 +25,8 @@ return new class extends Migration
             $table->string('status')->default('pending');
             $table->timestamps();
 
-            $table->index(['document_id', 'user_id']);
-            $table->index(['status', 'expires_at']);
+            $table->index(['document_id', 'user_id'], 'document_assignments_document_user_index');
+            $table->index(['status', 'expires_at'], 'document_assignments_status_expires_at_index');
         });
     }
 
@@ -35,4 +35,3 @@ return new class extends Migration
         Schema::dropIfExists('document_assignments');
     }
 };
-

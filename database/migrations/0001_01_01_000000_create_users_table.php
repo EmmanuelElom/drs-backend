@@ -13,31 +13,33 @@ return new class extends Migration
     {
         Schema::create('users', function (Blueprint $table) {
             $table->id();
-            $table->string('username')->unique();
-            $table->string('email')->unique();
+            $table->string('username')->unique('users_username_unique');
+            $table->string('email')->unique('users_email_unique');
             $table->timestamp('email_verified_at')->nullable();
             $table->string('password');
             $table->enum('role', ['admin', 'user'])->default('user');
             $table->unsignedInteger('jwt_token_version')->default(0);
-            $table->string('api_token_hash', 64)->nullable()->unique();
+            $table->string('api_token_hash', 64)->nullable()->unique('users_api_token_hash_unique');
             $table->timestamp('api_token_last_used_at')->nullable();
             $table->rememberToken();
             $table->timestamps();
         });
 
         Schema::create('password_reset_tokens', function (Blueprint $table) {
-            $table->string('email')->primary();
+            $table->string('email');
+            $table->primary('email', 'password_reset_tokens_email_primary');
             $table->string('token');
             $table->timestamp('created_at')->nullable();
         });
 
         Schema::create('sessions', function (Blueprint $table) {
-            $table->string('id')->primary();
-            $table->foreignId('user_id')->nullable()->index();
+            $table->string('id');
+            $table->primary('id', 'sessions_id_primary');
+            $table->foreignId('user_id')->nullable()->index('sessions_user_id_index');
             $table->string('ip_address', 45)->nullable();
             $table->text('user_agent')->nullable();
             $table->longText('payload');
-            $table->integer('last_activity')->index();
+            $table->integer('last_activity')->index('sessions_last_activity_index');
         });
     }
 

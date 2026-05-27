@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\Document;
 use App\Models\DocumentField;
+use App\Models\DocumentInvitation;
 use App\Services\AuditLogger;
 use Illuminate\Http\Request;
+use Illuminate\Support\Str;
 
 class DocumentFieldController extends Controller
 {
@@ -45,10 +47,12 @@ class DocumentFieldController extends Controller
             'metadata' => ['nullable', 'array'],
         ]);
 
+        $invitation = $this->resolveInvitationAssignment($document, $data);
+
         $field = DocumentField::query()->create([
             'document_id' => $document->id,
-            'invitation_id' => $data['invitation_id'] ?? null,
-            'assigned_recipient_email' => $data['assigned_recipient_email'] ?? null,
+            'invitation_id' => $invitation?->id,
+            'assigned_recipient_email' => $this->resolveAssignedRecipientEmail($invitation, $data['assigned_recipient_email'] ?? null),
             'field_type' => $data['field_type'] ?? 'signature',
             'page' => $data['page'],
             'x' => $data['x'],
@@ -90,6 +94,20 @@ class DocumentFieldController extends Controller
             'metadata' => ['nullable', 'array'],
         ]);
 
+        $invitation = $this->resolveInvitationAssignment($field->document, $data, $field);
+
+        if ($field->signatures()->exists()) {
+            $assignmentChanged = array_key_exists('invitation_id', $data) && (string) ($data['invitation_id'] ?? null) !== (string) $field->invitation_id;
+            $emailChanged = array_key_exists('assigned_recipient_email', $data) && $this->normalizeEmail($data['assigned_recipient_email'] ?? null) !== $this->normalizeEmail($field->assigned_recipient_email);
+
+            abort_unless(! $assignmentChanged && ! $emailChanged, 422, 'This field already has signatures and cannot be reassigned.');
+        }
+
+        if ($invitation) {
+            $data['invitation_id'] = $invitation->id;
+            $data['assigned_recipient_email'] = $this->resolveAssignedRecipientEmail($invitation, $data['assigned_recipient_email'] ?? null);
+        }
+
         $field->fill($data)->save();
 
         $this->auditLogger->fromRequest(
@@ -109,6 +127,8 @@ class DocumentFieldController extends Controller
     {
         $field->loadMissing('document');
         $this->authorize('update', $field->document);
+
+        abort_unless(! $field->signatures()->exists(), 422, 'This field already has signatures and cannot be deleted.');
 
         $document = $field->document;
         $field->delete();
@@ -142,5 +162,46 @@ class DocumentFieldController extends Controller
             'metadata' => $field->metadata,
         ];
     }
-}
 
+    private function resolveInvitationAssignment(Document $document, array $data, ?DocumentField $field = null): ?DocumentInvitation
+    {
+        $invitationId = array_key_exists('invitation_id', $data)
+            ? $data['invitation_id']
+            : $field?->invitation_id;
+        $assignedEmail = array_key_exists('assigned_recipient_email', $data)
+            ? $data['assigned_recipient_email']
+            : $field?->assigned_recipient_email;
+
+        if (empty($invitationId)) {
+            return null;
+        }
+
+        $invitation = DocumentInvitation::query()->findOrFail($invitationId);
+        abort_unless($invitation->document_id === $document->id, 422, 'The invitation must belong to the same document.');
+        abort_unless((bool) $invitation->can_sign, 422, 'Signature fields must be assigned to sign invitations.');
+
+        if (filled($assignedEmail)) {
+            abort_unless(
+                Str::lower(trim($assignedEmail)) === Str::lower(trim($invitation->recipient_email)),
+                422,
+                'The assigned recipient email must match the invitation recipient email.'
+            );
+        }
+
+        return $invitation;
+    }
+
+    private function resolveAssignedRecipientEmail(?DocumentInvitation $invitation, ?string $assignedRecipientEmail): ?string
+    {
+        if ($invitation) {
+            return $invitation->recipient_email;
+        }
+
+        return filled($assignedRecipientEmail) ? trim($assignedRecipientEmail) : null;
+    }
+
+    private function normalizeEmail(?string $email): ?string
+    {
+        return filled($email) ? Str::lower(trim($email)) : null;
+    }
+}

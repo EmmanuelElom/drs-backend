@@ -10,8 +10,8 @@ return new class extends Migration
     {
         Schema::create('document_fields', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('document_id')->constrained('documents')->cascadeOnDelete();
-            $table->foreignId('invitation_id')->nullable()->constrained('document_invitations')->nullOnDelete();
+            $table->foreignId('document_id')->constrained('documents', indexName: 'document_fields_document_id_foreign')->cascadeOnDelete();
+            $table->foreignId('invitation_id')->nullable()->constrained('document_invitations', indexName: 'document_fields_invitation_id_foreign')->nullOnDelete();
             $table->string('assigned_recipient_email')->nullable();
             $table->string('field_type')->default('signature');
             $table->unsignedInteger('page');
@@ -23,8 +23,8 @@ return new class extends Migration
             $table->json('metadata')->nullable();
             $table->timestamps();
 
-            $table->index(['document_id', 'field_type']);
-            $table->index(['invitation_id', 'assigned_recipient_email']);
+            $table->index(['document_id', 'field_type'], 'document_fields_document_field_type_index');
+            $table->index(['invitation_id', 'assigned_recipient_email'], 'document_fields_invitation_assigned_recipient_email_index');
         });
     }
 
@@ -33,4 +33,3 @@ return new class extends Migration
         Schema::dropIfExists('document_fields');
     }
 };
-

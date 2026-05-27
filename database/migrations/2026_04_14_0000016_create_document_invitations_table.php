@@ -10,13 +10,13 @@ return new class extends Migration
     {
         Schema::create('document_invitations', function (Blueprint $table) {
             $table->id();
-            $table->foreignId('document_id')->constrained('documents')->cascadeOnDelete();
+            $table->foreignId('document_id')->constrained('documents', indexName: 'document_invitations_document_id_foreign')->cascadeOnDelete();
             $table->string('recipient_email');
             $table->string('recipient_name')->nullable();
-            $table->foreignId('invited_by')->nullable()->constrained('users')->nullOnDelete();
+            $table->foreignId('invited_by')->nullable()->constrained('users', indexName: 'document_invitations_invited_by_foreign')->nullOnDelete();
             $table->timestamp('invited_at')->nullable();
             $table->timestamp('expires_at')->nullable();
-            $table->string('access_token_hash', 64)->unique();
+            $table->string('access_token_hash', 64)->unique('document_invitations_access_token_hash_unique');
             $table->string('invitation_type')->default('review');
             $table->string('status')->default('pending');
             $table->timestamp('viewed_at')->nullable();
@@ -30,8 +30,8 @@ return new class extends Migration
             $table->json('metadata')->nullable();
             $table->timestamps();
 
-            $table->index(['document_id', 'recipient_email']);
-            $table->index(['status', 'expires_at']);
+            $table->index(['document_id', 'recipient_email'], 'document_invitations_document_recipient_email_index');
+            $table->index(['status', 'expires_at'], 'document_invitations_status_expires_at_index');
         });
     }
 
@@ -40,4 +40,3 @@ return new class extends Migration
         Schema::dropIfExists('document_invitations');
     }
 };
-

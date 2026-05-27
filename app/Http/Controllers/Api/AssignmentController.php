@@ -12,6 +12,7 @@ use App\Models\Signature;
 use App\Models\User;
 use App\Services\AuditLogger;
 use App\Services\DocumentCompletionNotifier;
+use App\Services\SignedPdfService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 
@@ -19,7 +20,8 @@ class AssignmentController extends Controller
 {
     public function __construct(
         private readonly AuditLogger $auditLogger,
-        private readonly DocumentCompletionNotifier $completionNotifier
+        private readonly DocumentCompletionNotifier $completionNotifier,
+        private readonly SignedPdfService $signedPdfService
     )
     {
     }
@@ -195,6 +197,8 @@ class AssignmentController extends Controller
             'status' => 'reviewed',
         ])->save();
 
+        $this->signedPdfService->finalizeDocumentIfComplete($document);
+
         $this->auditLogger->fromRequest(
             action: 'review_completed',
             request: $request,
@@ -263,27 +267,33 @@ class AssignmentController extends Controller
             'document_field_id' => ['nullable', 'exists:document_fields,id'],
         ]);
 
-        $fieldId = $data['document_field_id'] ?? null;
-        if ($fieldId) {
-            $field = DocumentField::query()->findOrFail($fieldId);
+        $eligibleFields = $this->signedPdfService->resolveSignatureFieldsForSigner($document, $assignment->user?->email, null);
+        abort_if($eligibleFields->isEmpty(), 422, 'No signature fields are assigned to this signer.');
+
+        if (! empty($data['document_field_id'])) {
+            $field = DocumentField::query()->findOrFail($data['document_field_id']);
             abort_unless($field->document_id === $document->id, 422, 'The signature field must belong to the same document.');
-        } else {
-            $field = $document->fields->firstWhere('field_type', 'signature')
-                ?? $document->fields->first();
+            abort_unless(
+                $eligibleFields->contains(fn (DocumentField $eligibleField) => (string) $eligibleField->id === (string) $field->id),
+                422,
+                'The signature field is not assigned to this signer.'
+            );
         }
 
-        $signature = Signature::query()->create([
-            'document_id' => $document->id,
-            'invitation_id' => null,
-            'document_field_id' => $field?->id,
-            'user_id' => $assignment->user_id,
-            'signer_name' => $data['signer_name'] ?? $assignment->user?->username,
-            'signer_email' => $data['signer_email'] ?? $assignment->user?->email,
-            'signature_data' => $data['signature_data'],
-            'signed_at' => now(),
-            'ip_address' => $data['ip_address'] ?? $request->ip(),
-            'metadata' => $data['metadata'] ?? null,
-        ]);
+        $signatures = $eligibleFields->map(function (DocumentField $field) use ($assignment, $request, $document, $data) {
+            return Signature::query()->create([
+                'document_id' => $document->id,
+                'invitation_id' => null,
+                'document_field_id' => $field->id,
+                'user_id' => $assignment->user_id,
+                'signer_name' => $data['signer_name'] ?? $assignment->user?->username,
+                'signer_email' => $data['signer_email'] ?? $assignment->user?->email,
+                'signature_data' => $data['signature_data'],
+                'signed_at' => now(),
+                'ip_address' => $data['ip_address'] ?? $request->ip(),
+                'metadata' => $data['metadata'] ?? null,
+            ]);
+        })->values();
 
         $assignment->forceFill([
             'signature_completed' => true,
@@ -291,21 +301,18 @@ class AssignmentController extends Controller
             'status' => 'signed',
         ])->save();
 
-        $document->forceFill([
-            'status' => 'signed',
-            'signature_completed' => true,
-            'signature_completed_at' => now(),
-            'completed_at' => now(),
-        ])->save();
+        $this->signedPdfService->refresh($document);
+        $this->signedPdfService->finalizeDocumentIfComplete($document);
 
-        $signature->loadMissing(['document', 'user', 'documentField']);
+        $signatures->each(fn (Signature $createdSignature) => $createdSignature->loadMissing(['document', 'user', 'documentField']));
+        $signature = $signatures->first();
 
         $this->auditLogger->fromRequest(
             action: 'signature_added',
             request: $request,
             targetUser: $assignment->user,
             document: $document,
-            details: sprintf('Signed "%s" by %s.', $document->title, $signature->signer_name)
+            details: sprintf('Signed "%s" by %s (%s fields).', $document->title, $signature->signer_name, $signatures->count())
         );
 
         $this->auditLogger->fromRequest(
@@ -327,7 +334,8 @@ class AssignmentController extends Controller
             'message' => 'Signature saved successfully.',
             'data' => [
                 'assignment' => $this->serializeAssignment($assignment->fresh(['document.owner', 'document.createdBy', 'user', 'assignedByUser'])),
-                'signature' => (new SignatureResource($signature))->toArray($request),
+                'signature' => $signature ? (new SignatureResource($signature))->toArray($request) : null,
+                'signatures' => $signatures->map(fn (Signature $createdSignature) => (new SignatureResource($createdSignature))->toArray($request))->values(),
             ],
         ], 201);
     }
