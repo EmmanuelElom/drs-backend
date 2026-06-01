@@ -26,10 +26,7 @@ class SignatureController extends Controller
         $this->authorize('view', $document);
 
         return response()->json([
-            'data' => $document->signatures()
-                ->with(['user', 'invitation', 'documentField'])
-                ->orderByDesc('id')
-                ->get()
+            'data' => $this->signedPdfService->resolveAccessibleSignaturesForUser($document, $request->user())
                 ->map(fn (Signature $signature) => $this->serializeSignature($document, $signature))
                 ->values(),
         ]);

@@ -70,7 +70,13 @@ FILESYSTEM_DISK=local
 SESSION_DRIVER=database
 QUEUE_CONNECTION=database
 CACHE_STORE=database
-MAIL_MAILER=log
+MAIL_MAILER=smtp
+MAIL_HOST=mail.bothsign.com
+MAIL_PORT=465
+MAIL_SCHEME=ssl
+MAIL_USERNAME=info@bothsign.com
+MAIL_FROM_ADDRESS=info@bothsign.com
+MAIL_EHLO_DOMAIN=mail.bothsign.com
 ```
 
 For production, update the following as needed:

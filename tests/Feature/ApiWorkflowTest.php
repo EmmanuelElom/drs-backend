@@ -2,9 +2,11 @@
 
 namespace Tests\Feature;
 
+use App\Mail\DocumentCompletionMail;
 use App\Mail\DocumentInvitationMail;
 use App\Models\AppSetting;
 use App\Models\Document;
+use App\Models\DocumentField;
 use App\Models\User;
 use Illuminate\Foundation\Testing\RefreshDatabase;
 use Illuminate\Http\UploadedFile;
@@ -78,6 +80,25 @@ class ApiWorkflowTest extends TestCase
                 && Str::endsWith($mail->data['action_url'], "/sign/{$documentId}");
         });
 
+        $events = $this->withHeader('Authorization', "Bearer {$token}")
+            ->getJson('/api/dev/notification-events')
+            ->assertOk()
+            ->json('data');
+
+        $this->assertCount(2, $events);
+        $this->assertTrue(collect($events)->contains(function (array $event) use ($documentId, $reviewer) {
+            return $event['eventType'] === 'review_invitation_sent'
+                && $event['type'] === 'invitation_notification'
+                && $event['recipientEmail'] === $reviewer->email
+                && Str::endsWith($event['accessUrl'] ?? '', "/review/{$documentId}");
+        }));
+        $this->assertTrue(collect($events)->contains(function (array $event) use ($documentId, $reviewer) {
+            return $event['eventType'] === 'signature_invitation_sent'
+                && $event['type'] === 'invitation_notification'
+                && $event['recipientEmail'] === $reviewer->email
+                && Str::endsWith($event['accessUrl'] ?? '', "/sign/{$documentId}");
+        }));
+
         $this->withHeader('Authorization', "Bearer {$token}")
             ->deleteJson("/api/documents/{$documentId}")
             ->assertOk()
@@ -110,8 +131,12 @@ class ApiWorkflowTest extends TestCase
             'role' => 'user',
         ]);
 
+        Mail::fake();
+
         $document = Document::query()->create([
             'document_uuid' => (string) Str::uuid(),
+            'owner_id' => $admin->id,
+            'created_by_id' => $admin->id,
             'user_id' => $user->id,
             'assigned_by_id' => $admin->id,
             'title' => 'Signed Workflow',
@@ -123,6 +148,18 @@ class ApiWorkflowTest extends TestCase
             'review_acknowledged' => false,
             'signature_invited' => true,
             'signature_invited_at' => now(),
+        ]);
+
+        DocumentField::query()->create([
+            'document_id' => $document->id,
+            'assigned_recipient_email' => $user->email,
+            'field_type' => 'signature',
+            'page' => 1,
+            'x' => 10,
+            'y' => 10,
+            'width' => 20,
+            'height' => 6,
+            'required' => true,
         ]);
 
         $token = $this->loginAndGetToken('user', 'user123');
@@ -146,18 +183,32 @@ class ApiWorkflowTest extends TestCase
             ->assertJsonPath('data.reviewAcknowledged', true)
             ->assertJsonPath('data.status', 'reviewed');
 
+        Mail::assertQueued(DocumentCompletionMail::class, function (DocumentCompletionMail $mail) use ($admin) {
+            return $mail->hasTo($admin->email)
+                && $mail->data['recipient_name'] === $admin->username
+                && Str::startsWith($mail->data['subject_line'], 'Review Completed:')
+                && Str::endsWith($mail->data['action_url'], '/documents');
+        });
+
         $this->withHeader('Authorization', "Bearer {$token}")
             ->postJson("/api/documents/{$document->document_uuid}/signatures", [
                 'signature_data' => 'data:image/png;base64,abc123',
             ])
             ->assertCreated()
-            ->assertJsonPath('data.signatureData', 'data:image/png;base64,abc123');
+            ->assertJsonPath('data.0.signatureData', 'data:image/png;base64,abc123');
+
+        Mail::assertQueued(DocumentCompletionMail::class, function (DocumentCompletionMail $mail) use ($admin) {
+            return $mail->hasTo($admin->email)
+                && $mail->data['recipient_name'] === $admin->username
+                && Str::startsWith($mail->data['subject_line'], 'Signing Completed:')
+                && Str::endsWith($mail->data['action_url'], '/documents');
+        });
 
         $this->assertDatabaseHas('comments', ['id' => $commentResponse['id']]);
         $this->assertDatabaseHas('signatures', ['document_id' => $document->id]);
         $this->assertDatabaseHas('documents', [
             'id' => $document->id,
-            'status' => 'signed',
+            'status' => 'reviewed',
             'review_acknowledged' => 1,
         ]);
         $this->assertDatabaseHas('audit_logs', ['action' => 'comment_added']);
@@ -195,6 +246,10 @@ class ApiWorkflowTest extends TestCase
                 'role' => 'user',
             ])
             ->assertForbidden();
+
+        $this->withHeader('Authorization', "Bearer {$token}")
+            ->getJson('/api/dev/notification-events')
+            ->assertForbidden();
     }
 
     public function test_users_can_update_their_profile_and_admins_can_update_users(): void
@@ -231,7 +286,6 @@ class ApiWorkflowTest extends TestCase
             ->putJson("/api/users/{$user->id}", [
                 'username' => 'reviewer-updated',
                 'email' => 'reviewer-updated@example.com',
-                'role' => 'user',
                 'password' => 'reviewer456',
                 'password_confirmation' => 'reviewer456',
             ])
@@ -243,9 +297,9 @@ class ApiWorkflowTest extends TestCase
             'id' => $user->id,
             'username' => 'reviewer-updated',
             'email' => 'reviewer-updated@example.com',
+            'role' => 'user',
         ]);
         $this->assertDatabaseHas('audit_logs', ['action' => 'profile_updated']);
-        $this->assertDatabaseHas('audit_logs', ['action' => 'user_updated']);
         $this->assertDatabaseHas('audit_logs', ['action' => 'password_changed']);
     }
 

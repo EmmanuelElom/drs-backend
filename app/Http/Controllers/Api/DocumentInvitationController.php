@@ -754,6 +754,7 @@ class DocumentInvitationController extends Controller
             'fileSize' => $document->file_size,
             'status' => $document->status,
             'fileData' => $document->file_data,
+            'showSignaturesToSigners' => (bool) $document->show_signatures_to_signers,
             'signatureFields' => $signatureFields->map(fn (DocumentField $field) => [
                 'id' => (string) $field->id,
                 'invitationId' => $field->invitation_id ? (string) $field->invitation_id : null,

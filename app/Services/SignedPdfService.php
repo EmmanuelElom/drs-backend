@@ -7,6 +7,7 @@ use App\Models\DocumentAssignment;
 use App\Models\DocumentField;
 use App\Models\DocumentInvitation;
 use App\Models\Signature;
+use App\Models\User;
 use Illuminate\Support\Collection;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Str;
@@ -112,7 +113,12 @@ class SignedPdfService
      */
     public function resolveAccessibleSignaturesForInvitation(Document $document, DocumentInvitation $invitation): Collection
     {
-        $document->loadMissing(['signatures.documentField', 'fields']);
+        $document->loadMissing(['signatures.user', 'signatures.invitation', 'signatures.documentField', 'fields', 'invitations']);
+
+        if ($this->shouldShareSignaturesWithSigners($document)) {
+            return $this->sortSignatures($document->signatures->values());
+        }
+
         $accessibleFieldIds = $this->resolveSignatureFieldsForInvitation($document, $invitation)->pluck('id')->map(fn ($id) => (string) $id)->all();
 
         if ($accessibleFieldIds === []) {
@@ -125,6 +131,46 @@ class SignedPdfService
                     && (string) $signature->invitation_id === (string) $invitation->id;
             })
             ->values();
+    }
+
+    /**
+     * @return Collection<int, Signature>
+     */
+    public function resolveAccessibleSignaturesForUser(Document $document, ?User $user): Collection
+    {
+        $document->loadMissing(['signatures.user', 'signatures.invitation', 'signatures.documentField', 'fields', 'invitations']);
+
+        if (! $user) {
+            return collect();
+        }
+
+        if ($this->canUserSeeAllSignatures($document, $user)) {
+            return $this->sortSignatures($document->signatures->values());
+        }
+
+        $visibleFieldIds = $this->resolveSignatureFieldsForSigner($document, $user->email, null)
+            ->pluck('id')
+            ->map(fn ($id) => (string) $id)
+            ->all();
+
+        if ($visibleFieldIds === []) {
+            return $this->sortSignatures(
+                $document->signatures
+                    ->filter(function (Signature $signature) use ($user) {
+                        return (string) $signature->user_id === (string) $user->id
+                            || $this->normalizeEmail($signature->signer_email) === $this->normalizeEmail($user->email);
+                    })
+                    ->values()
+            );
+        }
+
+        return $this->sortSignatures(
+            $document->signatures
+                ->filter(function (Signature $signature) use ($visibleFieldIds) {
+                    return in_array((string) $signature->document_field_id, $visibleFieldIds, true);
+                })
+                ->values()
+        );
     }
 
     public function hasPendingInvitations(Document $document): bool
@@ -306,6 +352,18 @@ class SignedPdfService
         ])->values();
     }
 
+    /**
+     * @param Collection<int, Signature> $signatures
+     * @return Collection<int, Signature>
+     */
+    private function sortSignatures(Collection $signatures): Collection
+    {
+        return $signatures->sortBy([
+            ['signed_at', 'asc'],
+            ['id', 'asc'],
+        ])->values();
+    }
+
     private function normalizeEmail(?string $email): ?string
     {
         if (! filled($email)) {
@@ -322,6 +380,22 @@ class SignedPdfService
         return $document->invitations
             ->filter(fn (DocumentInvitation $invitation) => (bool) $invitation->can_sign && ! in_array($invitation->status, ['revoked', 'expired'], true))
             ->count() === 1;
+    }
+
+    private function shouldShareSignaturesWithSigners(Document $document): bool
+    {
+        return (bool) $document->show_signatures_to_signers;
+    }
+
+    private function canUserSeeAllSignatures(Document $document, User $user): bool
+    {
+        if ($user->role === 'admin') {
+            return true;
+        }
+
+        return (string) $document->owner_id === (string) $user->id
+            || (string) $document->created_by_id === (string) $user->id
+            || $this->shouldShareSignaturesWithSigners($document);
     }
 
     private function resolveSignedDisk(Document $document, string $fallbackDisk): string

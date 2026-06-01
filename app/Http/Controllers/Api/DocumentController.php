@@ -165,6 +165,7 @@ class DocumentController extends Controller
             'status' => ['nullable', 'in:draft,saved,sent,in-review,reviewed,signed,completed,archived'],
             'user_id' => ['nullable', 'exists:users,id'],
             'days_allowed' => ['nullable', 'integer', 'min:1'],
+            'show_signatures_to_signers' => ['nullable', 'boolean'],
             'file_name' => ['nullable', 'string', 'max:255'],
             'file_size' => ['nullable', 'integer', 'min:0'],
             'file_type' => ['nullable', 'string', 'max:100'],
@@ -211,6 +212,7 @@ class DocumentController extends Controller
             'file_path' => $storedFile['file_path'] ?? null,
             'storage_mode' => $hasUpload ? 'upload' : ($hasInlineFile ? 'base64' : $storageMode),
             'days_allowed' => $daysAllowed,
+            'show_signatures_to_signers' => $request->boolean('show_signatures_to_signers', true),
             'assigned_at' => $hasAssignment ? $assignedAt : null,
             'sent_at' => $hasAssignment ? $assignedAt : null,
             'expires_at' => ($hasAssignment && $daysAllowed) ? $assignedAt->copy()->addDays($daysAllowed) : null,
@@ -289,13 +291,22 @@ class DocumentController extends Controller
             'content' => ['nullable', 'string'],
             'status' => ['nullable', 'in:draft,saved,sent,in-review,reviewed,signed,completed,archived'],
             'days_allowed' => ['nullable', 'integer', 'min:1'],
+            'show_signatures_to_signers' => ['nullable', 'boolean'],
             'file_name' => ['nullable', 'string', 'max:255'],
             'file_size' => ['nullable', 'integer', 'min:0'],
             'file_type' => ['nullable', 'string', 'max:100'],
             'storage_mode' => ['nullable', 'in:base64,upload,auto'],
         ]);
 
-        $document->fill($data)->save();
+        $showSignaturesToSigners = $request->has('show_signatures_to_signers')
+            ? $request->boolean('show_signatures_to_signers')
+            : $document->show_signatures_to_signers;
+
+        unset($data['show_signatures_to_signers']);
+
+        $document->fill($data);
+        $document->show_signatures_to_signers = $showSignaturesToSigners;
+        $document->save();
 
         $this->auditLogger->fromRequest(
             action: 'document_updated',
@@ -654,6 +665,7 @@ class DocumentController extends Controller
             'signatureInvitedAt' => optional($document->signature_invited_at)->toISOString(),
             'signatureCompleted' => (bool) $document->signature_completed,
             'signatureCompletedAt' => optional($document->signature_completed_at)->toISOString(),
+            'showSignaturesToSigners' => (bool) $document->show_signatures_to_signers,
             'completedAt' => optional($document->completed_at)->toISOString(),
             'archivedAt' => optional($document->archived_at)->toISOString(),
             'createdAt' => optional($document->created_at)->toISOString(),
@@ -669,7 +681,9 @@ class DocumentController extends Controller
                 ? $document->comments->map(fn ($comment) => $this->serializeComment($document, $comment))->values()
                 : [],
             'signatures' => $includeRelations && $document->relationLoaded('signatures')
-                ? $document->signatures->map(fn ($signature) => $this->serializeSignature($document, $signature))->values()
+                ? $this->signedPdfService->resolveAccessibleSignaturesForUser($document, $actingUser)
+                    ->map(fn ($signature) => $this->serializeSignature($document, $signature))
+                    ->values()
                 : [],
             'invitations' => $includeRelations && $document->relationLoaded('invitations')
                 ? $document->invitations->map(fn (DocumentInvitation $invitation) => $this->serializeInvitation($document, $invitation))->values()

@@ -38,6 +38,7 @@ class Document extends Model
         'signature_invited_at',
         'signature_completed',
         'signature_completed_at',
+        'show_signatures_to_signers',
         'completed_at',
         'archived_at',
     ];
@@ -58,6 +59,7 @@ class Document extends Model
             'review_acknowledged' => 'boolean',
             'signature_invited' => 'boolean',
             'signature_completed' => 'boolean',
+            'show_signatures_to_signers' => 'boolean',
         ];
     }
 
