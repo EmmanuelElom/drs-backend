@@ -1,5 +1,20 @@
 <?php
 
+$mailScheme = env('MAIL_SCHEME', env('MAIL_ENCRYPTION'));
+
+if (is_string($mailScheme)) {
+    $mailScheme = strtolower(trim($mailScheme));
+
+    // Symfony Mailer uses "smtps" for implicit TLS on port 465.
+    if ($mailScheme === 'ssl') {
+        $mailScheme = 'smtps';
+    } elseif ($mailScheme === 'tls') {
+        $mailScheme = 'smtp';
+    } elseif ($mailScheme === '') {
+        $mailScheme = null;
+    }
+}
+
 return [
 
     /*
@@ -39,7 +54,8 @@ return [
 
         'smtp' => [
             'transport' => 'smtp',
-            'scheme' => env('MAIL_SCHEME', env('MAIL_ENCRYPTION')),
+            'scheme' => $mailScheme,
+            'verify_peer' => filter_var(env('MAIL_VERIFY_PEER', true), FILTER_VALIDATE_BOOL, FILTER_NULL_ON_FAILURE) ?? true,
             'url' => env('MAIL_URL'),
             'host' => env('MAIL_HOST', '127.0.0.1'),
             'port' => env('MAIL_PORT', 2525),

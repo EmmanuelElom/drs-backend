@@ -72,7 +72,22 @@
                     </tr>
                     <tr>
                         <td style="padding:20px 32px 28px;font-size:12px;line-height:1.6;color:#64748b;border-top:1px solid #e2e8f0;background:#fbfdff;">
-                            {{ $data['footer_note'] }}
+                            <div style="font-size:12px;font-weight:700;letter-spacing:0.08em;text-transform:uppercase;color:#0f172a;margin:0 0 10px;">
+                                Delivery &amp; privacy
+                            </div>
+                            <p style="margin:0 0 10px;">
+                                You are receiving this email because your address is connected to an active DRS document workflow.
+                            </p>
+                            <p style="margin:0 0 10px;">
+                                This is a transactional message. To reduce optional notifications, contact
+                                <a href="mailto:{{ $data['support_email'] }}?subject={{ rawurlencode('Unsubscribe from DRS workflow notifications') }}" style="color:#0f4c81;text-decoration:none;">
+                                    {{ $data['support_email'] }}
+                                </a>
+                                and include "unsubscribe" in the subject.
+                            </p>
+                            <p style="margin:0;">
+                                {{ $data['footer_note'] }}
+                            </p>
                         </td>
                     </tr>
                 </table>

@@ -73,9 +73,10 @@ CACHE_STORE=database
 MAIL_MAILER=smtp
 MAIL_HOST=mail.bothsign.com
 MAIL_PORT=465
-MAIL_SCHEME=ssl
+MAIL_SCHEME=smtps
 MAIL_USERNAME=info@bothsign.com
 MAIL_FROM_ADDRESS=info@bothsign.com
+MAIL_VERIFY_PEER=false
 MAIL_EHLO_DOMAIN=mail.bothsign.com
 ```
 

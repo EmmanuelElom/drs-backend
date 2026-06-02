@@ -20,4 +20,9 @@ Next steps:
 
 If you have trouble accessing the document, contact {{ $data['support_email'] }}.
 
+Delivery & privacy:
+- You are receiving this email because your address is connected to an active DRS document workflow.
+- This is a transactional message. To reduce optional notifications, email {{ $data['support_email'] }} and include "unsubscribe" in the subject.
+- Required workflow notices may still be sent for active documents and invitations.
+
 {{ $data['footer_note'] }}

@@ -659,6 +659,7 @@ class DocumentInvitationController extends Controller
                 : sprintf('%s completed a review for "%s".', $actorName, $document->title),
             'action_label' => 'Open Documents',
             'action_url' => $frontendUrl . '/documents',
+            'support_email' => config('mail.from.address'),
             'details' => [
                 ['label' => 'Document title', 'value' => $document->title],
                 ['label' => 'Document ID', 'value' => $document->document_uuid],

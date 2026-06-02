@@ -57,9 +57,13 @@ class ApiWorkflowTest extends TestCase
         $documentId = $createDocument['documentId'];
 
         Mail::assertQueued(DocumentInvitationMail::class, function (DocumentInvitationMail $mail) use ($reviewer, $documentId) {
+            $headers = $mail->headers();
+
             return $mail->data['invitation_type'] === 'review'
                 && $mail->data['recipient_email'] === $reviewer->email
-                && Str::endsWith($mail->data['action_url'], "/review/{$documentId}");
+                && $mail->data['support_email'] === config('mail.from.address')
+                && Str::endsWith($mail->data['action_url'], "/review/{$documentId}")
+                && str_contains($headers->text['List-Unsubscribe'] ?? '', 'mailto:');
         });
 
         $this->withHeader('Authorization', "Bearer {$token}")
@@ -75,9 +79,13 @@ class ApiWorkflowTest extends TestCase
             ->assertJsonPath('data.signatureInvited', true);
 
         Mail::assertQueued(DocumentInvitationMail::class, function (DocumentInvitationMail $mail) use ($reviewer, $documentId) {
+            $headers = $mail->headers();
+
             return $mail->data['invitation_type'] === 'signature'
                 && $mail->data['recipient_email'] === $reviewer->email
-                && Str::endsWith($mail->data['action_url'], "/sign/{$documentId}");
+                && $mail->data['support_email'] === config('mail.from.address')
+                && Str::endsWith($mail->data['action_url'], "/sign/{$documentId}")
+                && str_contains($headers->text['List-Unsubscribe'] ?? '', 'mailto:');
         });
 
         $events = $this->withHeader('Authorization', "Bearer {$token}")
@@ -184,10 +192,14 @@ class ApiWorkflowTest extends TestCase
             ->assertJsonPath('data.status', 'reviewed');
 
         Mail::assertQueued(DocumentCompletionMail::class, function (DocumentCompletionMail $mail) use ($admin) {
+            $headers = $mail->headers();
+
             return $mail->hasTo($admin->email)
                 && $mail->data['recipient_name'] === $admin->username
+                && $mail->data['support_email'] === config('mail.from.address')
                 && Str::startsWith($mail->data['subject_line'], 'Review Completed:')
-                && Str::endsWith($mail->data['action_url'], '/documents');
+                && Str::endsWith($mail->data['action_url'], '/documents')
+                && str_contains($headers->text['List-Unsubscribe'] ?? '', 'mailto:');
         });
 
         $this->withHeader('Authorization', "Bearer {$token}")
@@ -198,10 +210,14 @@ class ApiWorkflowTest extends TestCase
             ->assertJsonPath('data.0.signatureData', 'data:image/png;base64,abc123');
 
         Mail::assertQueued(DocumentCompletionMail::class, function (DocumentCompletionMail $mail) use ($admin) {
+            $headers = $mail->headers();
+
             return $mail->hasTo($admin->email)
                 && $mail->data['recipient_name'] === $admin->username
+                && $mail->data['support_email'] === config('mail.from.address')
                 && Str::startsWith($mail->data['subject_line'], 'Signing Completed:')
-                && Str::endsWith($mail->data['action_url'], '/documents');
+                && Str::endsWith($mail->data['action_url'], '/documents')
+                && str_contains($headers->text['List-Unsubscribe'] ?? '', 'mailto:');
         });
 
         $this->assertDatabaseHas('comments', ['id' => $commentResponse['id']]);
@@ -356,9 +372,13 @@ class ApiWorkflowTest extends TestCase
         $document = Document::query()->where('document_uuid', $documentId)->firstOrFail();
 
         Mail::assertQueued(DocumentInvitationMail::class, function (DocumentInvitationMail $mail) use ($user, $documentId) {
+            $headers = $mail->headers();
+
             return $mail->data['invitation_type'] === 'review'
                 && $mail->data['recipient_email'] === $user->email
-                && Str::endsWith($mail->data['action_url'], "/review/{$documentId}");
+                && $mail->data['support_email'] === config('mail.from.address')
+                && Str::endsWith($mail->data['action_url'], "/review/{$documentId}")
+                && str_contains($headers->text['List-Unsubscribe'] ?? '', 'mailto:');
         });
 
         $this->assertSame('upload', $document->storage_mode);
