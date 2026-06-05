@@ -54,6 +54,14 @@ class AppServiceProvider extends ServiceProvider
             ];
         });
 
+        RateLimiter::for('waitlist-submissions', function (Request $request) {
+            return [
+                Limit::perMinute(5)->by(
+                    Str::lower((string) $request->input('email')) . '|' . $request->ip()
+                ),
+            ];
+        });
+
         Auth::viaRequest('jwt', function (Request $request) {
             return app(JwtService::class)->resolveUserFromRequest($request);
         });

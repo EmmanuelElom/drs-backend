@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\DocumentFieldController;
 use App\Http\Controllers\Api\DocumentInvitationController;
 use App\Http\Controllers\Api\DocumentStorageSettingController;
 use App\Http\Controllers\Api\SignatureController;
+use App\Http\Controllers\Api\WaitlistSubmissionController;
 use App\Http\Controllers\Api\UserController;
 use Illuminate\Support\Facades\Route;
 
@@ -29,6 +30,9 @@ Route::post('/refresh', [AuthController::class, 'refresh']);
 Route::get('/me', [AuthController::class, 'me'])->middleware('auth:api');
 Route::put('/me', [AuthController::class, 'updateProfile'])->middleware('auth:api');
 Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth:api');
+
+Route::post('/waitlist', [WaitlistSubmissionController::class, 'store'])
+    ->middleware('throttle:waitlist-submissions');
 
 Route::middleware('auth:api')->group(function () {
     Route::get('/admin/dashboard', [AdminDashboardController::class, 'index']);
